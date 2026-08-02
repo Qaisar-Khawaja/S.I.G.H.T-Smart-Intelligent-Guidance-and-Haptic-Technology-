@@ -7,7 +7,7 @@
 #   C = close hazard    -> fast pulse (CLOSE-distance object, any direction)
 #
 # The host (main.py) already resolves multiple simultaneous hazards down
-# to a single "most urgent" code before sending. resolve_top_priority()
+# to a single "most urgent" code before sending.
 # below is kept purely as a safety net in case a line ever contains more
 # than one code (e.g. "M,C") -- it just picks the higher-priority one.
 
