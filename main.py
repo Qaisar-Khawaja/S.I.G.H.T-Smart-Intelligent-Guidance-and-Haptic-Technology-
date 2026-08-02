@@ -2,31 +2,32 @@ import time
 import cv2
 from ultralytics import YOLO
 
+from decision import hazard_score, cane_decision
 from command import generate_command
-from decision import cane_decision
 from pico_connection import send_command
 
 # Load YOLO
 model = YOLO("yolov8n.pt")
 
 # Open camera
-cap = cv2.VideoCapture(0)
+# find_camera.py once if you're not sure which index is which.
+CAMERA_INDEX = 0
+cap = cv2.VideoCapture(CAMERA_INDEX)
 
 if not cap.isOpened():
     print("Cannot open camera")
     exit()
 
 important_objects = [
-    "person",
-    "chair",
-    "bicycle",
-    "car",
-    "dog"
+    "bottle",
+    "cell phone",
 ]
 
 previous_command = None
 last_time_sent = 0
-send_delay = 1
+heartbeat_interval = 2.0  # resend the current command this often even if it
+                          # hasn't changed, so a dropped serial byte can't
+                          # leave the motor stuck on (or stuck off)
 
 try:
     while True:
@@ -40,6 +41,18 @@ try:
         right_limit = 2 * width / 3
 
         results = model(frame)
+
+        # Score every dangerous object in this frame and keep only the
+        # single most urgent one. This is what makes "two hazards at once"
+        # resolve to the closer/more-central one, instead of whichever box
+        # happened to be processed last.
+        top_score = 0
+        top_info = None  # (label, direction, distance)
+
+        # Collect draw info for every box so we can label pixel height
+        # and distance tier on screen -- this is what you use to pick
+        # real CLOSE/MEDIUM/FAR thresholds instead of guessing them.
+        overlay_boxes = []
 
         for result in results:
             boxes = result.boxes
@@ -73,36 +86,68 @@ try:
                 else:
                     distance = "FAR"
 
-                # Decision
-                action = cane_decision(
-                    label,
-                    direction,
-                    distance
+                score = hazard_score(label, direction, distance)
+
+                if score > top_score:
+                    top_score = score
+                    top_info = (label, direction, distance)
+
+                overlay_boxes.append(
+                    (int(x1), int(y1), int(y2), label, direction, distance, int(box_height))
                 )
 
-                # Hardware command
-                command = generate_command(action)
+        # Decide based on the single most urgent hazard this frame
+        if top_info:
+            label, direction, distance = top_info
+            action = cane_decision(label, direction, distance)
+        else:
+            label, direction, distance = None, None, None
+            action = "SAFE"
 
-                current_time = time.time()
+        # Hardware command
+        command = generate_command(action)
 
-                # Avoid sending same command repeatedly
-                if command != previous_command:
-                    print(
-                        f"""
+        current_time = time.time()
+
+        should_send = (
+            command != previous_command
+            or (current_time - last_time_sent) >= heartbeat_interval
+        )
+
+        if should_send:
+            if command != previous_command:
+                print(
+                    f"""
 Object: {label}
 Direction: {direction}
 Distance: {distance}
 Action: {action}
 Command: {command}
 """
-                    )
+                )
 
-                    send_command(command)
+            send_command(command)
 
-                    previous_command = command
-                    last_time_sent = current_time
+            previous_command = command
+            last_time_sent = current_time
 
         annotated = results[0].plot()
+
+        # Draw "h=<pixel height> <DISTANCE>" under each box so you can
+        # watch the number live and see exactly where it crosses your
+        # CLOSE/MEDIUM/FAR cutoffs as you move an object toward the camera.
+        for (x1, y1, y2, ov_label, ov_direction, ov_distance, box_height) in overlay_boxes:
+            text = f"h={box_height} {ov_distance}"
+            text_y = min(y2 + 25, height - 10)  # keep text on-screen even for tall boxes
+            cv2.putText(
+                annotated,
+                text,
+                (x1, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2,
+            )
 
         cv2.imshow(
             "Smart Cane Vision",
@@ -122,3 +167,4 @@ finally:
 
     cap.release()
     cv2.destroyAllWindows()
+
