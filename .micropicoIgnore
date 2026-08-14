@@ -1,0 +1,5 @@
+# Only sync the MicroPython/ folder (the code that actually runs on the Pico).
+# Everything else here is host-side Python that runs on the Mac, not the device.
+*
+!MicroPython/
+!MicroPython/**
