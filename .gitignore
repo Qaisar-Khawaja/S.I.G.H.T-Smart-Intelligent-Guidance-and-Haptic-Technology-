@@ -1,4 +1,27 @@
+# Local Python environments
 venv/
+.venv/
+
+# Python-generated caches
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebook and plotting caches
+.ipynb_checkpoints/
+.matplotlib/
+
+# Local editor/agent settings
+.claude/
+
+# OS and temporary files
+.DS_Store
+*.log
+*.tmp
+
+# Model weights are managed outside Git.
 *.pt

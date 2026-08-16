@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Optional GUI used for the human correction stage in annotation/to_label/.
+labelImg==1.8.6

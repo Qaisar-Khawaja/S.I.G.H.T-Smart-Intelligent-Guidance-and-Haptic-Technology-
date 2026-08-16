@@ -1,926 +1,280 @@
-# Smart Cane for the Visually Impaired
+# S.I.G.H.T. Smart Cane Computer Vision
 
-A Computer Vision based Smart Cane that detects nearby obstacles using **YOLOv8** and provides real-time feedback through a **Raspberry Pi Pico 2 W**.
+S.I.G.H.T. is a computer-vision prototype for assistive navigation. The
+checked-in live application uses a camera and YOLO11s to identify relevant
+obstacles, estimate their direction and distance tier, choose the most urgent
+hazard, and send a compact command to a Raspberry Pi Pico 2 W.
 
-The goal of this project is to assist visually impaired users by identifying nearby obstacles, determining their direction (left, center, or right), estimating how close they are, and providing appropriate feedback.
+The repository also contains the complete experimental path that led to the
+current design: controlled image restoration, evaluation on real cane-camera
+footage, pixel-level temporal fusion, filter and temporal oracles, and
+detection-level tracking with bounded persistence.
 
----
+## Current status
 
-# Features
+The strongest real-camera result is one-frame ByteTrack persistence:
 
-- Real-time object detection using YOLOv8
-- Detects important obstacles such as:
-  - Person
-  - Chair
-  - Bicycle
-  - Car
-  - Dog
-- Determines obstacle direction:
-  - Left
-  - Center
-  - Right
-- Estimates obstacle distance using bounding box size
-- Makes navigation decisions
-- Sends commands to Raspberry Pi Pico 2 W
-- Controls hardware feedback (currently onboard LED)
+| Method | Precision | Recall | mAP@0.5 | Rescued | Lost | Stale persisted FP |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Raw YOLO11s | 0.8738 | 0.2616 | 0.2591 | 0 | 0 | 0 |
+| ByteTrack + 1-frame persistence | 0.8716 | 0.2762 | 0.2698 | 5 | 0 | 1 |
 
----
+This tracking method is implemented and evaluated in `tracking/evaluate.py`.
+It is not yet integrated into `main.py`; the checked-in live application still
+uses current-frame YOLO detections. The Pico code provides haptic motor output.
+No separate audio-alert implementation is currently tracked in this branch.
 
-# Current System Architecture
+## Datasets
 
-```
-                Laptop Camera
-                     │
-                     ▼
-             YOLOv8 Object Detection
-                     │
-                     ▼
-             Direction Detection
-                     │
-                     ▼
-             Distance Estimation
-                     │
-                     ▼
-              Decision Logic
-                     │
-                     ▼
-             Command Generation
-                     │
-                 USB Serial
-                     │
-                     ▼
-          Raspberry Pi Pico 2 W
-                     │
-                     ▼
-             LED / Future Motors
-```
+### Dataset A: controlled synthetic restoration
 
-# Software
+- 40 clean COCO images in `data/clean/`
+- Corresponding YOLO-format labels in `data/clean_labels/`
+- Synthetic Gaussian noise, motion blur, low light, and glare
+- PSNR, SSIM, detection accuracy, and runtime evaluation
 
-- Python 3.11
-- MicroPython
-- Thonny IDE
-- OpenCV
-- Ultralytics YOLOv8
-- PyTorch
-- NumPy
-- PySerial
----
+The degradation parameters are pinned in `restoration/degrade.py`. The compared
+methods are raw input, Gaussian, bilateral, Wiener denoising, Wiener
+deconvolution, and CLAHE.
 
-# Repository Structure
+### Dataset B: real cane-camera benchmark
 
-```
-SmartCane/
-│
-├── main.py
-├── decision.py
-├── command.py
-├── pico_connection.py
-├── README.md
-└── requirements.txt
-```
+- 7 original videos in `data/videos/`
+- 84 lossless target PNGs in `data/frames_real/`
+- 84 human-reviewed YOLO label files in `data/real_labels/`
+- 344 scored ground-truth instances
+- Quality groups: `clear`, `moderate_blur`, and `severe_blur`
+- Frame/video/timestamp metadata in `data/frames_real_metadata.csv`
 
-### File Description
+`data/frames_real/`, `data/real_labels/`, and
+`data/frames_real_metadata.csv` are the canonical Dataset B evaluation paths.
+The annotation and `smart_cane_frames/` directories retain selection and
+annotation provenance.
 
-### `main.py`
+### Variable-frame-rate warning
 
-Main application.
+`video1.mov` behaves as variable-frame-rate footage. Its stored frame number can
+be several decoded frames away from the intended timestamp. Temporal code must
+locate targets using decoded `CAP_PROP_POS_MSEC` timestamps, as implemented in
+`temporal/neighbors.py`, rather than relying only on
+`round(timestamp * fps)`.
 
-Responsibilities:
+## Experimental findings
 
-- Open camera
-- Run YOLO detection
-- Determine obstacle direction
-- Estimate obstacle distance
-- Call decision logic
-- Generate hardware commands
-- Send commands to Pico
+1. Matched restoration can help on known synthetic degradation in Dataset A.
+2. On real Dataset B frames, raw YOLO11s generally beats universal
+   single-frame preprocessing.
+3. Farneback alignment and pixel fusion degrade detection under large
+   cane-sweep ego-motion, especially for severe blur.
+4. The filter union raises recall from about 0.262 to 0.329, but most GT objects
+   remain missed by every tested preprocessing method.
+5. Nearby raw frames provide meaningful temporal headroom: recall reaches
+   0.3459 at +/-1, 0.4390 at +/-3, and 0.4826 at +/-5 in the bidirectional
+   oracle.
+6. The causal past-1 oracle reaches 0.3227 recall.
+7. One-frame ByteTrack persistence captures a modest portion of this headroom
+   while nearly preserving raw precision.
 
----
+Detailed reports:
 
-### `decision.py`
+- `TEMPORAL_RESTORATION.md`
+- `TEMPORAL_ORACLE.md`
+- `TRACKING_PERSISTENCE.md`
 
-Contains the smart cane navigation logic.
+## Repository layout
 
-Input:
-
-- Object
-- Direction
-- Distance
-
-Output:
-
-- WARN_LEFT
-- WARN_RIGHT
-- STOP
-- SAFE
-
----
-
-### `command.py`
-
-Converts actions into hardware commands.
-
-| Action | Command |
-|---------|----------|
-| WARN_LEFT | L |
-| WARN_RIGHT | R |
-| STOP | C |
-| SAFE | S |
-
----
-
-### `pico_connection.py`
-
-Handles USB serial communication between the laptop and Raspberry Pi Pico 2 W.
-
----
-
-# Installation
-
-## Step 1 - Clone Repository
-
-```bash
-git clone https://github.com/USERNAME/SmartCane.git
-cd SmartCane
+```text
+.
+├── main.py, decision.py, command.py, pico_connection.py
+│   Live host-side vision and command pipeline
+├── MicroPython/
+│   Pico-side haptic controller
+├── data/
+│   Dataset A, Dataset B, source videos, labels, and metadata
+├── annotation/
+│   Model-assisted annotation and promotion workflow
+├── restoration/
+│   Degradations, filters, metrics, and Dataset A/B evaluators
+├── temporal/
+│   Neighbor lookup, optical flow, quality gates, and pixel fusion
+├── tracking/
+│   ByteTrack/BoT-SORT configurations and persistence evaluation
+├── analysis/
+│   Oracles, plots, and qualitative example generation
+└── results/
+    CSVs, prediction caches, plots, examples, and tracking states
 ```
 
----
-
-## Step 2 - Create Virtual Environment
+## Installation
 
 Python 3.11 is recommended.
 
 ```bash
 python3.11 -m venv venv
-```
-
-Activate environment
-
-macOS/Linux
-
-```bash
 source venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-Windows
-
-```bash
-venv\Scripts\activate
-```
-
----
-
-## Step 3 - Install Dependencies
+For the optional annotation GUI:
 
 ```bash
-pip install ultralytics
-pip install opencv-python
-pip install pyserial
-pip install torch torchvision torchaudio
+python -m pip install -r requirements-annotation.txt
 ```
 
----
+The current environment was validated with NumPy 1.26.4 and Ultralytics
+8.4.120. CPU execution is supported; compatible Apple Silicon systems may use
+MPS automatically for YOLO inference.
 
-# Installation Issues Encountered
+## Model weights
 
-## Issue 1 - Python 3.13
+Active code loads `yolo11s.pt` from the repository root. Ultralytics may
+download the official weight when network access is available; otherwise place
+the file in the project root before running an evaluator.
 
-Initially the project was created using Python 3.13.
+Model weights are intentionally ignored by Git. The weight used for the stored
+results has this SHA-256 digest:
 
-Installing PyTorch produced:
-
-```
-ERROR: No matching distribution found for torch
-```
-
-### Solution
-
-Create a Python 3.11 virtual environment.
-
----
-
-## Issue 2 - NumPy Version
-
-PyTorch produced the warning:
-
-```
-A module compiled using NumPy 1.x cannot be run in NumPy 2.x
+```text
+85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5
 ```
 
-### Solution
-
-Downgrade NumPy.
+Verify a local copy on macOS/Linux with:
 
 ```bash
-pip install "numpy<2"
+shasum -a 256 yolo11s.pt
 ```
 
-Installed version:
+## Reproducing the experiments
 
-```
-NumPy 1.26.4
-```
+Run commands from the repository root. The repository tracks reference outputs,
+so commands that regenerate them will produce Git changes. Oracle and tracking
+commands deliberately require an explicit force option before overwriting
+existing outputs.
 
----
-
-# Verify Installation
-
-Verify PyTorch
+### Dataset A
 
 ```bash
-python -c "import torch; print(torch.__version__)"
+python -m restoration.eval_dataset_a
+MPLCONFIGDIR=/private/tmp/sight-mpl-cache python -m analysis.plots
 ```
 
-Verify YOLO
+Primary output: `results/results_dataset_a.csv`.
+
+### Dataset B and single-frame filters
 
 ```bash
-python -c "from ultralytics import YOLO; print('YOLO works')"
+python -m restoration.eval_dataset_b
+python -m analysis.hero_examples
 ```
 
-Expected output
-
-```
-YOLO works
-```
-
----
-
-# Object Detection
-
-YOLOv8 detects objects from the webcam.
-
-Example workflow
-
-```
-Camera
-    ↓
-YOLO
-    ↓
-Person detected
-```
-
-Only important objects are considered.
-
-Current object list
-
-- Person
-- Chair
-- Bicycle
-- Car
-- Dog
-
----
-
-# Direction Detection
-
-Each frame is divided into three equal sections.
-
-```
-LEFT | CENTER | RIGHT
-```
-
-The object's bounding box center determines its direction.
-
-```
-center_x = (x1 + x2) / 2
-```
-
----
-
-# Distance Estimation
-
-The project estimates distance using the height of the detected bounding box.
-
-```
-Height > 250
-    CLOSE
-
-Height > 120
-    MEDIUM
-
-Otherwise
-    FAR
-```
-
-This is an approximation.
-
-Larger bounding boxes usually indicate objects that are closer to the camera.
-
----
-
-# Decision Logic
-
-Examples
-
-```
-Person
-Center
-Close
-
-↓
-
-STOP
-```
-
-```
-Chair
-Left
-Close
-
-↓
-
-WARN_LEFT
-```
-
-```
-Dog
-Right
-Close
-
-↓
-
-WARN_RIGHT
-```
-
----
-
-# Command Generation
-
-The generated action is converted into a simple command.
-
-```
-WARN_LEFT
-↓
-
-L
-```
-
-```
-WARN_RIGHT
-↓
-
-R
-```
-
-```
-STOP
-↓
-
-C
-```
-
-```
-SAFE
-↓
-
-S
-```
-
----
-
-# Raspberry Pi Pico 2 W
-
-MicroPython was installed on the Pico.
-
-Thonny IDE was used to upload programs.
-
-The Pico receives commands through USB serial.
-
-Example
-
-```
-Received: C
-```
-
-The onboard LED responds to received commands.
-
----
-
-# Communication Pipeline
-
-Current communication
-
-```
-Laptop
-    │
-USB Serial
-    │
-Pico 2 W
-```
-
-Future communication
-
-```
-Laptop
-    │
-WiFi
-    │
-Pico 2 W
-```
-
----
-
-# Current Project Status
-
-Completed
-
-- Computer Vision pipeline
-- YOLOv8 object detection
-- Direction detection
-- Distance estimation
-- Decision logic
-- Command generation
-- Raspberry Pi Pico communication
-- LED feedback
-
----
-
-# Future Improvements
-
-- Wireless communication using WiFi
-- External LEDs
-- Vibration motors
-- Audio feedback
-- Speaker with voice alerts
-- Better distance estimation
-- Walking path detection
-- Object prioritization
-- Outdoor testing
-
----
-
-# Technologies Used
-
-- Python
-- MicroPython
-- OpenCV
-- Ultralytics YOLOv8
-- PyTorch
-- Raspberry Pi Pico 2 W
-- Computer Vision
-- Embedded Systems
-- Serial Communication
-
----
-
-# Project Workflow
-
-```
-Camera
-   │
-   ▼
-YOLOv8
-   │
-   ▼
-Object Detection
-   │
-   ▼
-Direction Detection
-   │
-   ▼
-Distance Estimation
-   │
-   ▼
-Decision Logic
-   │
-   ▼
-Command Generation
-   │
-   ▼
-USB Serial
-   │
-   ▼
-Raspberry Pi Pico 2 W
-   │
-   ▼
-LED Feedback
-```
-
----
-
-# Setup Instructions
-
-Follow the steps below to set up the Smart Cane project from scratch.
-
----
-
-# Step 1 - Create Project Folder
-
-Open Terminal.
-
-Create a new folder for the project.
+Primary outputs:
+
+- `results/results_dataset_b_frames.csv`
+- `results/results_dataset_b_summary.csv`
+- `results/results_dataset_b_groundtruth.csv`
+- `results/results_dataset_b_by_quality.csv`
+- `results/hero_examples/`
+
+### Pixel-level temporal restoration
 
 ```bash
-mkdir SmartCane
-cd SmartCane
+python -m restoration.eval_temporal
+python -m analysis.temporal_hero_examples
+MPLCONFIGDIR=/private/tmp/sight-mpl-cache python -m analysis.temporal_plots
 ```
 
----
+Primary outputs are `results/temporal_results.csv`,
+`results/temporal_frame_analysis.csv`, `results/temporal_examples/`, and the
+temporal plots under `results/plots/`.
 
-# Step 2 - Create a Python Virtual Environment
-
-> **Recommended Python Version: 3.11**
-
-Do **NOT** use Python 3.13 because PyTorch may not install correctly.
-
-Create the virtual environment:
+### Filter oracle
 
 ```bash
-python3.11 -m venv venv
+python -m analysis.oracle_recall
 ```
 
-Activate the virtual environment.
+Outputs: `results/oracle_union_instances.csv` and
+`results/oracle_union_summary.csv`.
 
-macOS/Linux
+### Temporal detection oracle
 
 ```bash
-source venv/bin/activate
+python -m analysis.temporal_oracle --force-outputs
+python -m analysis.temporal_oracle_causal --force-output
 ```
 
-Windows
+Full-video predictions are retained in `results/temporal_oracle_cache/` so
+valid caches can be reused without repeating all YOLO inference. Use
+`--rebuild-cache` only when the videos, model, threshold, or class set changes.
+
+### Tracking and persistence
 
 ```bash
-venv\Scripts\activate
+MPLCONFIGDIR=/private/tmp/sight-mpl-cache \
+  python -m tracking.evaluate --force-outputs
 ```
 
-Your terminal should now show:
+The evaluator requires the seven temporal-oracle cache shards and the causal
+oracle summary. It verifies the expected 84 frames, 344 GT instances, and raw
+baseline before writing tracking results.
 
-```
-(venv)
-```
+Important outputs include:
 
----
+- `results/tracking_results.csv`
+- `results/tracking_instance_analysis.csv`
+- `results/tracking_detection_analysis.csv`
+- `results/tracking_oracle_comparison.csv`
+- `results/tracking_runtime.csv`
+- `results/tracking_frame_states.jsonl`
+- `results/tracking_plots/`
+- `results/tracking_examples/`
 
-# Step 3 - Upgrade pip
+## Annotation workflow
+
+The existing labels are already human-reviewed. To annotate additional selected
+frames:
 
 ```bash
-pip install --upgrade pip
+python -m annotation.select_subset
+python -m annotation.prelabel
+labelImg annotation/to_label
+python -m annotation.promote_labels
 ```
 
----
+`prelabel` creates drafts only. Every draft must be manually corrected before
+promotion into `data/real_labels/`.
 
-# Step 4 - Install Required Libraries
+## Live application
 
-Install OpenCV
-
-```bash
-pip install opencv-python
-```
-
-Install YOLO
-
-```bash
-pip install ultralytics
-```
-
-Install serial communication library
-
-```bash
-pip install pyserial
-```
-
-Install PyTorch
-
-```bash
-pip install torch torchvision torchaudio
-```
-
----
-
-# Step 5 - NumPy Compatibility Fix
-
-If you receive the warning
-
-```
-A module compiled using NumPy 1.x cannot be run in NumPy 2.x
-```
-
-install NumPy 1.x
-
-```bash
-pip install "numpy<2"
-```
-
----
-
-# Step 6 - Verify Installation
-
-Check PyTorch
-
-```bash
-python -c "import torch; print(torch.__version__)"
-```
-
-Check YOLO
-
-```bash
-python -c "from ultralytics import YOLO; print('YOLO works')"
-```
-
-Expected output
-
-```
-YOLO works
-```
-
----
-
-# Step 7 - Create Project Files
-
-Create the following files inside the project folder.
-
-```
-SmartCane/
-│
-├── main.py
-├── decision.py
-├── command.py
-├── pico_connection.py
-└── README.md
-```
-
----
-
-# Step 8 - Add the Python Code
-
-Copy the project code into
-
-- `main.py`
-- `decision.py`
-- `command.py`
-- `pico_connection.py`
-
-Save all files.
-
----
-
-# Step 9 - Download the YOLO Model
-
-The first time the following line is executed
-
-```python
-model = YOLO("yolov8n.pt")
-```
-
-YOLO automatically downloads
-
-```
-yolov8n.pt
-```
-
-No manual download is required.
-
----
-
-# Step 10 - Test Object Detection
-
-Run
+The live entry point remains:
 
 ```bash
 python main.py
 ```
 
-The laptop webcam should open.
-
-Verify that objects such as
-
-- Person
-- Chair
-- Dog
-- Bicycle
-
-are detected.
-
-Close the window by pressing
-
-```
-q
-```
-
----
-
-# Step 11 - Install MicroPython on Raspberry Pi Pico 2 W
-
-Download the latest MicroPython firmware for the Raspberry Pi Pico 2 W from the official MicroPython website.
-
-Disconnect the Pico from your computer.
-
-Press and hold the **BOOTSEL** button on the Pico.
-
-While holding the button:
-
-- Connect the Pico to the computer using USB.
-- Release the BOOTSEL button.
-
-A new USB drive named
-
-```
-RPI-RP2
-```
-
-should appear.
-
-Copy the downloaded `.uf2` firmware file onto the `RPI-RP2` drive.
-
-The Pico will automatically reboot with MicroPython installed.
-
----
-
-# Step 12 - Install Thonny IDE
-
-Download and install Thonny.
-
-Open Thonny.
-
-Go to
-
-```
-Tools
-→ Options
-→ Interpreter
-```
-
-Select
-
-```
-MicroPython (Raspberry Pi Pico)
-```
-
-Choose the Pico USB port.
-
-Click
-
-```
-OK
-```
-
-You should now see the MicroPython shell
-
-```
->>>
-```
-
----
-
-# Step 13 - Test the Pico
-
-Create a new Python file in Thonny.
-
-Example
-
-```python
-from machine import Pin
-import time
-
-led = Pin("LED", Pin.OUT)
-
-while True:
-    led.toggle()
-    time.sleep(1)
-```
-
-Save the file as
-
-```
-main.py
-```
-
-Choose
-
-```
-Raspberry Pi Pico
-```
-
-as the save location.
-
-The onboard LED should begin blinking.
-
----
-
-# Step 14 - Find the Pico USB Port
-
-Disconnect and reconnect the Pico.
-
-Open Terminal.
-
-Run
-
-```bash
-ls /dev/cu.*
-```
-
-Example output
-
-```
-/dev/cu.usbmodem144201
-```
-
-Copy this port name.
-
----
-
-# Step 15 - Configure Serial Communication
-
-Open
-
-```
-pico_connection.py
-```
-
-Replace the serial port with your Pico port.
-
-Example
-
-```python
-serial.Serial(
-    "/dev/cu.usbmodem144201",
-    115200,
-    timeout=1
-)
-```
-
-Save the file.
-
----
-
-# Step 16 - Upload Pico Receiver Code
-
-Open Thonny.
-
-Replace the Pico code with the serial receiver program.
-
-Save it again as
-
-```
-main.py
-```
-
-on the Pico.
-
-Restart the Pico.
-
-The Pico should print
-
-```
-Smart Cane Pico Ready
-```
-
----
-
-# Step 17 - Close Thonny
-
-Before running the computer vision program,
-
-**close Thonny completely.**
-
-Only one application can access the Pico USB port at a time.
-
-If Thonny remains open, Python will not be able to communicate with the Pico.
-
----
-
-# Step 18 - Run the Smart Cane
-
-Activate the virtual environment
-
-```bash
-source venv/bin/activate
-```
-
-Run
-
-```bash
-python main.py
-```
-
-The webcam should open.
-
-When a person or obstacle is detected,
-
-the laptop should print something similar to
-
-```
-Object: person
-Direction: CENTER
-Distance: CLOSE
-Action: STOP
-Command: C
-```
-
-The Pico should receive the command and respond by turning on the onboard LED.
-
----
-
-# Step 19 - Exit the Program
-
-Press
-
-```
-q
-```
-
-to close the webcam.
-
-Disconnect the Pico when finished.
-
+It expects the configured camera and serial-connected Pico. Camera index and
+serial-port settings are currently defined in the existing live source files.
+Press `q` in the OpenCV window to exit. Hardware source and configuration should
+be validated on the actual demonstration system before changing them.
+
+## Evaluation notes
+
+- YOLO confidence is 0.15 for the live and real-camera evaluation paths.
+- Relevant classes are defined centrally in `restoration/classes.py`.
+- Detection matching uses same-class IoU >= 0.5.
+- `restoration/detection_metrics.py` is the shared mAP implementation.
+- The stored raw mAP@0.5 and mAP@0.5:0.95 are both 0.2591. The stricter sweep
+  was implemented separately over IoU thresholds 0.50 through 0.95; the unusual
+  equality is retained for later verification rather than altered during
+  repository cleanup.
+- Nearby video frames are correlated, so the 84 targets should not be described
+  as statistically independent samples.
+
+## Reproducibility policy
+
+Datasets, annotations, metadata, result tables, plots, qualitative failures, and
+expensive full-video prediction caches are intentionally tracked. Virtual
+environments, Python caches, local agent/editor settings, and model weights are
+ignored. Do not remove duplicate-looking annotation or dataset exports without
+first confirming their provenance and canonical consumer paths.
