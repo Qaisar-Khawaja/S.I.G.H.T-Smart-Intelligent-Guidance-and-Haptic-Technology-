@@ -33,9 +33,9 @@ def ssim(restored, clean):
 def sharpness(image):
     """
     Variance of the Laplacian: a cheap proxy for how in-focus/blurry a
-    frame is. Higher = sharper. Used by sample_frames.py to bucket real
-    video frames across the sharp -> heavily-blurred range, and could
-    later drive an adaptive filter-selection threshold.
+    frame is. Higher = sharper. The archived exploratory frame sampler
+    used it to bucket real video frames across the sharp -> heavily-blurred
+    range; it could also drive an adaptive filter-selection threshold.
     """
     import cv2
 

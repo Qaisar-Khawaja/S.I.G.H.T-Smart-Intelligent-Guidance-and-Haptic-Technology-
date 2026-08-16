@@ -101,8 +101,10 @@ Detailed reports:
 │   ByteTrack/BoT-SORT configurations and persistence evaluation
 ├── analysis/
 │   Oracles, plots, and qualitative example generation
-└── results/
-    CSVs, prediction caches, plots, examples, and tracking states
+├── results/
+│   CSVs, prediction caches, plots, examples, and tracking states
+└── archive/
+    Preserved exploratory code and superseded generated examples
 ```
 
 ## Installation
