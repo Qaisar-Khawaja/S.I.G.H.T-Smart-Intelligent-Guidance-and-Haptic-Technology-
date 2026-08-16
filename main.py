@@ -2,12 +2,12 @@ import time
 import cv2
 from ultralytics import YOLO
 
-from decision import hazard_score, cane_decision
+from decision import hazard_score, cane_decision, DANGEROUS_OBJECTS
 from command import generate_command
 from pico_connection import send_command
 
 # Load YOLO
-model = YOLO("yolov8n.pt")
+model = YOLO("yolo11s.pt")
 
 # Open camera
 # find_camera.py once if you're not sure which index is which.
@@ -18,10 +18,19 @@ if not cap.isOpened():
     print("Cannot open camera")
     exit()
 
-important_objects = [
-    "bottle",
-    "cell phone",
-]
+# The one place this list is defined -- decision.py's hazard scoring
+# already filters on it too, so keeping a second copy here risked the
+# two silently drifting apart.
+important_objects = DANGEROUS_OBJECTS
+
+# Default YOLO confidence (0.25) turned out too strict for this
+# camera's actual mounting angle (low, close-up, oblique -- see
+# restoration/eval_dataset_b.py findings): real objects were being
+# detected around 5-10% confidence and silently dropped before
+# main.py ever saw them. Lowered to trade some false-positive buzzes
+# for catching hazards that were previously missed entirely -- for a
+# safety device, a missed obstacle is worse than an extra buzz.
+YOLO_CONFIDENCE = 0.15
 
 previous_command = None
 last_time_sent = 0
@@ -40,7 +49,7 @@ try:
         left_limit = width / 3
         right_limit = 2 * width / 3
 
-        results = model(frame)
+        results = model(frame, conf=YOLO_CONFIDENCE)
 
         # Score every dangerous object in this frame and keep only the
         # single most urgent one. This is what makes "two hazards at once"

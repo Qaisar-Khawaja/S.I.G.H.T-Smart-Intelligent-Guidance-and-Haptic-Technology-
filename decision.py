@@ -16,8 +16,10 @@ Design:
 """
 
 DANGEROUS_OBJECTS = [
-    "bottle",
-    "cell phone",
+    "person",
+    "chair",
+    "dining table",  # YOLO's actual COCO class name for tables
+    "backpack",
 ]
 
 # Base urgency by distance tier. FAR (or anything unrecognized) = 0 = ignore.

@@ -1,0 +1,7 @@
+filter,n_annotated_frames,precision,recall,map50
+raw,84,0.8738,0.2616,0.2591
+gaussian,84,0.8105,0.2238,0.1895
+bilateral,84,0.8312,0.186,0.1777
+wiener_denoise,84,0.8778,0.2297,0.2227
+wiener_deconv,84,0.0,0.0,0.0
+clahe,84,0.7129,0.2093,0.183
