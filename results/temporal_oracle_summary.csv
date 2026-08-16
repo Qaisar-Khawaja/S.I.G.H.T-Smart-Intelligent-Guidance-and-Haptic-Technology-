@@ -1,0 +1,5 @@
+quality_group,n_target_frames,n_gt_instances,raw_detected,raw_missed,raw_recall,raw_misses_recoverable_pm1,temporal_oracle_pm1_detected,temporal_oracle_pm1_recall,ambiguous_misses_pm1,raw_misses_recoverable_pm3,temporal_oracle_pm3_detected,temporal_oracle_pm3_recall,ambiguous_misses_pm3,raw_misses_recoverable_pm5,temporal_oracle_pm5_detected,temporal_oracle_pm5_recall,ambiguous_misses_pm5,never_recovered_pm5,ambiguous_only_pm5
+overall,84,344,90,254,0.2616,29,119,0.3459,66,61,151,0.439,85,76,166,0.4826,97,178,51
+clear,28,125,47,78,0.376,11,58,0.464,34,19,66,0.528,37,23,70,0.56,38,55,21
+moderate_blur,35,154,37,117,0.2403,15,52,0.3377,28,34,71,0.461,39,44,81,0.526,48,73,21
+severe_blur,21,65,6,59,0.0923,3,9,0.1385,4,8,14,0.2154,9,9,15,0.2308,11,50,9

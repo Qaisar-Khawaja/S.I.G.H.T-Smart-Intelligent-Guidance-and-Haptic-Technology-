@@ -1,0 +1,10 @@
+method,device,benchmark_video,benchmark_frames,yolo_preprocess_ms,yolo_inference_ms,yolo_postprocess_ms,yolo_wall_ms,tracker_overhead_ms,persistence_wrapper_ms,total_latency_ms,estimated_fps
+raw,cpu,video6,120,1.355,125.155,0.915,129.009,0.0,0.0,129.009,7.75
+bytetrack,cpu,video6,120,1.355,125.155,0.915,129.009,1.012,0.0,130.021,7.69
+bytetrack_persist_1,cpu,video6,120,1.355,125.155,0.915,129.009,1.012,0.018,130.039,7.69
+bytetrack_persist_3,cpu,video6,120,1.355,125.155,0.915,129.009,1.012,0.018,130.039,7.69
+bytetrack_persist_5,cpu,video6,120,1.355,125.155,0.915,129.009,1.012,0.018,130.039,7.69
+botsort,cpu,video6,120,1.355,125.155,0.915,129.009,9.518,0.0,138.527,7.22
+botsort_persist_1,cpu,video6,120,1.355,125.155,0.915,129.009,9.518,0.016,138.543,7.22
+botsort_persist_3,cpu,video6,120,1.355,125.155,0.915,129.009,9.518,0.016,138.543,7.22
+botsort_persist_5,cpu,video6,120,1.355,125.155,0.915,129.009,9.518,0.016,138.543,7.22

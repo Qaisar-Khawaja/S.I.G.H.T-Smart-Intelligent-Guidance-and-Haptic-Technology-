@@ -99,6 +99,41 @@ def match_detections(detections, ground_truths, iou_threshold=IOU_THRESHOLD):
     return tp, fp, detections
 
 
+def match_gt_to_predictions(gts, preds, iou_threshold=IOU_THRESHOLD):
+    """
+    Single-image, per-ground-truth-instance counterpart to match_detections:
+    that function reports which *detections* were true/false positives;
+    this reports which *ground-truth objects* got caught, which is what
+    "was this specific object detected by method X" analyses (oracle/union
+    recall, rescue bookkeeping) actually need.
+
+    Uses the same greedy algorithm (process predictions highest-confidence
+    first, each usable at most once, matched to the best remaining
+    same-class ground truth at or above iou_threshold) so results are
+    consistent with match_detections/precision_recall_map on the same data.
+
+    gts: [(class_id, box), ...] for one image
+    preds: [(class_id, confidence, box), ...] for one image
+    Returns [(matched: bool, confidence: float or None), ...] aligned to gts.
+    """
+    sorted_preds = sorted(preds, key=lambda d: -d[1])
+    gt_entries = [{"class_id": c, "box": box, "matched": False, "conf": None} for c, box in gts]
+
+    for class_id, conf, box in sorted_preds:
+        best_iou, best_gt = 0.0, None
+        for gt in gt_entries:
+            if gt["matched"] or gt["class_id"] != class_id:
+                continue
+            current_iou = iou(box, gt["box"])
+            if current_iou > best_iou:
+                best_iou, best_gt = current_iou, gt
+        if best_gt is not None and best_iou >= iou_threshold:
+            best_gt["matched"] = True
+            best_gt["conf"] = conf
+
+    return [(gt["matched"], gt["conf"]) for gt in gt_entries]
+
+
 def average_precision(recalls, precisions):
     """VOC-2012-style all-point interpolated AP for a single class."""
     mrec = np.concatenate(([0.0], recalls, [1.0]))

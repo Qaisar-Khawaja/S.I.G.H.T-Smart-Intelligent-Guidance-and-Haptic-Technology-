@@ -1,0 +1,5 @@
+quality_group,n_gt_instances,raw_recall,union_recall,recall_gain
+overall,344,0.2616,0.3285,0.0669
+clear,125,0.376,0.488,0.112
+moderate_blur,154,0.2403,0.2857,0.0455
+severe_blur,65,0.0923,0.1231,0.0308
