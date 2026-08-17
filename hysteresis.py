@@ -7,9 +7,9 @@ THE PROBLEM
     confidence dips; a bounding box jitters a few pixels either side of
     a distance threshold; an object straddling the frame-thirds boundary
     flips between LEFT and CENTER. Acting on the raw per-frame command
-    therefore produces rapid state churn -- C, S, C, L, C -- and every
-    one of those transitions restarts a clip and resets the vibration.
-    The result is a cane that chatters instead of informing.
+    therefore produces rapid state churn, and every transition restarts
+    a clip and resets the vibration. The result is a cane that chatters
+    instead of informing.
 
 THE FIX
     A proposed command must persist for several consecutive frames
@@ -18,24 +18,34 @@ THE FIX
 
     The two directions are deliberately asymmetric:
 
-        escalating   (something got MORE dangerous)  -> commit fast
-        de-escalating (something got LESS dangerous) -> commit slowly
+        escalating    (something got MORE dangerous)  -> commit fast
+        de-escalating (something got LESS dangerous)  -> commit slowly
 
     The costs are not symmetric. A late warning means walking into an
     obstacle; a late all-clear means a moment of unnecessary caution.
     So the system is quick to warn and slow to reassure.
 
-    Escalation is tallied by URGENCY, not by exact letter. If frames
-    alternate L, C, L, C while the cane is in S, every one of them
-    agrees that things got worse, so they accumulate together and the
-    worst of them commits. Tallying by exact letter would let the two
-    candidates reset each other forever and the user would be warned
-    about nothing at all.
+    Escalation is tallied by URGENCY, not by exact code. If frames
+    alternate ML, CR while the cane is in S, both agree that things got
+    worse, so they accumulate together and the worse of them commits.
+    Tallying by exact code would let the two candidates reset each
+    other forever and the user would be warned about nothing at all.
 
-    De-escalation and lateral moves (L <-> R) still require the SAME
-    command to persist, since there is no urgency to accumulate and a
-    person crossing the field of view shouldn't produce direction
-    chatter as they pass through centre.
+TWO-DIMENSIONAL CODES
+    Codes are urgency + direction (see command.py). Only the urgency
+    half participates in the escalate/relax decision -- a change of
+    direction at the same urgency (ML -> MR, or MC -> ML) is neither an
+    escalation nor a de-escalation, so it routes through the slow path.
+
+    That is deliberate and it is what stabilises direction: a person
+    drifting across the frame-thirds boundary produces LEFT/CENTER
+    flicker, and requiring the new direction to persist stops the
+    speaker announcing a new side every few frames.
+
+ONE STREAM, BOTH CHANNELS
+    The Pico drives speech and vibration from a single state variable
+    fed by this stabilised stream, so the two channels cannot drift out
+    of step. Stabilising the command stabilises both.
 
 NOTE ON UNITS
     Thresholds are counted in FRAMES, so the wall-clock delay scales
@@ -47,8 +57,14 @@ NOTE ON UNITS
 import time
 
 
-# Ordering that defines what "more urgent" means.
-URGENCY = {"S": 0, "L": 1, "R": 1, "C": 2}
+# Ordering that defines what "more urgent" means. All three MEDIUM codes
+# sit at tier 1 and all three CLOSE codes at tier 2: direction does not
+# affect urgency, which is the whole point of separating the dimensions.
+URGENCY = {
+    "S":  0,
+    "ML": 1, "MC": 1, "MR": 1,
+    "CL": 2, "CC": 2, "CR": 2,
+}
 
 FRAMES_TO_ESCALATE = 2      # ~0.13s at 15fps
 FRAMES_TO_RELAX    = 8      # ~0.53s at 15fps
@@ -143,14 +159,16 @@ class CommandStabilizer:
         stable_urgency = URGENCY.get(self.state, 0)
 
         # ── Case 1: more urgent than the committed state ──
-        # Tally by urgency, not by letter, so alternating proposals
-        # (L, C, L, C) still accumulate toward a commit.
+        # Tally by urgency, not by exact code, so alternating proposals
+        # (ML, CR, ML, CR) still accumulate toward a commit.
         if raw_urgency > stable_urgency:
             self._escalate_count += 1
             self._relax_count = 0
             self._relax_candidate = None
 
-            # Remember the worst thing seen during this escalation.
+            # Remember the worst thing seen during this escalation. The
+            # direction that commits is the one attached to that worst
+            # reading, which is the hazard actually being escaped.
             if (self._pending is None
                     or raw_urgency >= URGENCY.get(self._pending, 0)):
                 self._pending = raw
@@ -169,8 +187,10 @@ class CommandStabilizer:
             self._pending = None
             self._relax_candidate = None
 
-        # ── Case 3: less urgent, or a lateral move (L <-> R) ──
-        # Require the SAME command to persist for the slow threshold.
+        # ── Case 3: less urgent, OR the same urgency with a different
+        # direction (ML -> MR). Both require the SAME code to persist
+        # for the slow threshold, which is what stops the speaker
+        # flipping sides as an object drifts across a boundary.
         else:
             self._escalate_count = 0
             self._pending = None

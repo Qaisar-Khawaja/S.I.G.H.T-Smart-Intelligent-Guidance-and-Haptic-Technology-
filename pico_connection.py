@@ -55,21 +55,21 @@ else:
     PICO_PORT = "/dev/cu.usbmodem144201"      # <- ls /dev/cu.* to confirm
     BAUD      = 115200
 
-    _pico = None
+    pico = None
 
     try:
-        _pico = serial.Serial(PICO_PORT, BAUD, timeout=1)
+        pico = serial.Serial(PICO_PORT, BAUD, timeout=1)
         print(f"Cane link: wired -> {PICO_PORT}")
     except Exception as e:
         # Don't kill the vision pipeline just because no board is plugged in.
         print(f"Serial port unavailable ({e}). Commands will be printed only.")
 
     def send_command(command):
-        if _pico is None:
+        if pico is None:
             print("Sent (no link):", command)
             return
         try:
-            _pico.write((command + "\n").encode())
-            print("Sent (serial):", command)
+            pico.write((command + "\n").encode())
+            print("Sent to Pico (serial):", command)
         except Exception as e:
             print("Command not delivered:", e)
