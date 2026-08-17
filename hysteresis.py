@@ -69,7 +69,7 @@ URGENCY = {
 FRAMES_TO_ESCALATE = 2      # ~0.13s at 15fps
 FRAMES_TO_RELAX    = 8      # ~0.53s at 15fps
 
-HEARTBEAT_SECONDS  = 4.0    # resend the committed command this often even
+HEARTBEAT_SECONDS  = 1.0    # resend the committed command this often even
                             # when unchanged, so a dropped UDP packet can't
                             # strand the cane buzzing or silent
 

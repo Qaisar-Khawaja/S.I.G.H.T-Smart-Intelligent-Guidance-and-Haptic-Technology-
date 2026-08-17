@@ -35,8 +35,8 @@ WIRING
     Speaker       -> DFPlayer SPK_1 / SPK_2 (not to the Pico)
 """
 
-from machine import Pin, UART
-import network
+from machine import Pin, UART # type: ignore
+import network # type: ignore
 import socket
 import time
 
@@ -53,6 +53,7 @@ VOLUME = 10              # 0-30. Tune here, not in the tests.
 
 VALID = ("S", "ML", "MC", "MR", "CL", "CC", "CR")
 
+LINK_TIMEOUT_MS = 3000
 
 
 
@@ -149,6 +150,7 @@ motor.value(0)
 current_state    = "S"                 # full code, e.g. "CL"
 current_urgency  = "S"                 # char 0 only -- what the motor follows
 last_toggle_time = time.ticks_ms()
+last_packet_at   = time.ticks_ms()     # for the link watchdog
 motor_on         = False
 
 
@@ -169,7 +171,14 @@ try:
             cmd = sock.recv(16).decode().strip().upper()
         except OSError:
             cmd = None
-
+        
+        # Any valid traffic proves the link is alive, including heartbeat
+        # resends of the state we're already in. This must be updated
+        # BEFORE the "did the state change" filter below, or repeated
+        # heartbeats would never refresh the watchdog.
+        if cmd in VALID:
+            last_packet_at = now
+        
         if cmd in VALID and cmd != current_state:
             current_state = cmd
 
@@ -189,6 +198,13 @@ try:
 
             print(" ", cmd)
 
+        if (current_state != "S" and time.ticks_diff(now, last_packet_at) > LINK_TIMEOUT_MS):
+            current_state = "S"
+            current_urgency = "S"
+            motor.value(0)
+            motor_on = False
+            df_send(DF_STOP)
+            print("Link lost - failed safe")
 
 
         # ==========================================
