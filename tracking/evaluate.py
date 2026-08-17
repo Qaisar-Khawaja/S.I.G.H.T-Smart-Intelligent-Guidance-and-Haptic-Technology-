@@ -36,13 +36,7 @@ from ultralytics.engine.results import Boxes
 from ultralytics.trackers.bot_sort import BOTSORT
 from ultralytics.trackers.byte_tracker import BYTETracker
 
-from analysis.temporal_oracle import (
-    CACHE_DIR,
-    CONFIDENCE,
-    MODEL_PATH,
-    _nearest_frame,
-    load_video_cache,
-)
+from analysis.temporal_oracle import _nearest_frame, load_video_cache
 from restoration.classes import CLASS_NAMES, RELEVANT_CLASSES
 from restoration.detection_metrics import (
     IOU_THRESHOLD,
@@ -65,6 +59,10 @@ FRAME_STATES_JSONL = Path("results/tracking_frame_states.jsonl")
 EXAMPLES_DIR = Path("results/tracking_examples")
 PLOTS_DIR = Path("results/tracking_plots")
 REPORT_MD = Path("TRACKING_PERSISTENCE.md")
+DEFAULT_CACHE_DIR = Path("results/temporal_oracle_cache")
+DEFAULT_CAUSAL_ORACLE_CSV = Path("results/temporal_oracle_causal_summary.csv")
+MODEL_PATH = "yolo11s.pt"
+CONFIDENCE = 0.15
 
 TRACKER_CONFIGS = {
     "bytetrack": Path("tracking/bytetrack_sight.yaml"),
@@ -539,8 +537,8 @@ def runtime_rows(result_rows, tracker_runtime, yolo_runtime):
     return rows
 
 
-def oracle_comparison(result_rows):
-    with open("results/temporal_oracle_causal_summary.csv") as handle:
+def oracle_comparison(result_rows, causal_oracle_csv):
+    with causal_oracle_csv.open() as handle:
         oracle_rows = {row["quality_group"]: row for row in csv.DictReader(handle)}
     result_lookup = {(row["method"], row["quality_group"]): row for row in result_rows}
     rows = []
@@ -777,7 +775,16 @@ def generate_plots(result_rows, oracle_rows, runtime, best_method):
     plt.close(fig)
 
 
-def write_report(result_rows, oracle_rows, runtime, best_method, examples, force=False):
+def write_report(
+    result_rows,
+    oracle_rows,
+    runtime,
+    best_method,
+    examples,
+    causal_oracle_csv,
+    model_path,
+    force=False,
+):
     _safe_output(REPORT_MD, force)
     lookup = {(row["method"], row["quality_group"]): row for row in result_rows}
     runtime_lookup = {row["method"]: row for row in runtime}
@@ -797,7 +804,7 @@ def write_report(result_rows, oracle_rows, runtime, best_method, examples, force
         "| Group | Raw | Past 1 | Past 3 | Past 5 | Future 5 | ±5 |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    with open("results/temporal_oracle_causal_summary.csv") as handle:
+    with causal_oracle_csv.open() as handle:
         causal = list(csv.DictReader(handle))
     for row in causal:
         lines.append(
@@ -811,7 +818,7 @@ def write_report(result_rows, oracle_rows, runtime, best_method, examples, force
         "",
         "## Tracking method",
         "",
-        "ByteTrack and BoT-SORT are the implementations bundled with Ultralytics 8.4.120. Their default thresholds are pinned in `tracking/*_sight.yaml`: high/new-track 0.25, low 0.10, match 0.8, and lost-track buffer 30. YOLO input remains `yolo11s.pt` at confidence 0.15. BoT-SORT uses built-in sparse-optical-flow global motion compensation and no ReID.",
+        f"ByteTrack and BoT-SORT are the implementations bundled with Ultralytics 8.4.120. Their default thresholds are pinned in `tracking/*_sight.yaml`: high/new-track 0.25, low 0.10, match 0.8, and lost-track buffer 30. YOLO input is `{model_path}` at confidence {CONFIDENCE}. BoT-SORT uses built-in sparse-optical-flow global motion compensation and no ReID.",
         "",
         f"Standard tracker output omits unconfirmed and unmatched tracks. For safety, persistence configurations pass every current raw YOLO observation through unchanged and add unmatched Kalman-predicted states for at most 1, 3, or 5 frames. At annotated targets, the pass-through observations come from the exact target PNG used by the established raw baseline; only genuine predicted states come from continuous video tracking, preventing variable-frame-rate decode differences from masquerading as rescues/losses. Predicted confidence = last detection confidence × {CONFIDENCE_DECAY}^missed_frames; boxes are clipped and decayed confidence below {CONFIDENCE} is dropped. A predicted lost box overlapping a current same-class observation at IoU >= {IOU_THRESHOLD} is suppressed as a duplicate.",
         "",
@@ -868,9 +875,11 @@ def write_report(result_rows, oracle_rows, runtime, best_method, examples, force
     ])
     for group in ("overall",) + QUALITY_GROUPS:
         row = next(item for item in oracle_rows if item["method"] == best_method and item["quality_group"] == group)
+        fraction = row["fraction_of_oracle_headroom_recovered"]
+        fraction_text = "not applicable" if fraction == "" else f"{fraction:.1%}"
         lines.append(
             f"| {group} | {row['raw_recall']:.4f} | {row['past_only_oracle_recall']:.4f} | "
-            f"{row['actual_tracker_recall']:.4f} | {row['fraction_of_oracle_headroom_recovered']:.1%} |"
+            f"{row['actual_tracker_recall']:.4f} | {fraction_text} |"
         )
     lines.extend([
         "",
@@ -887,11 +896,24 @@ def write_report(result_rows, oracle_rows, runtime, best_method, examples, force
         )
     lines.extend([
         "",
-        "The runtime benchmark is a sequential single-frame measurement on the current CPU environment. Existing stored project measurements were approximately 21.5 FPS for raw and 7.6–7.8 FPS for pixel-level temporal restoration; hardware/runtime state can make direct absolute comparisons noisy.",
+        (
+            "The runtime benchmark is a sequential single-frame measurement on the current CPU environment. "
+            + (
+                "Earlier stored YOLO11s measurements were approximately 21.5 FPS for raw and 7.6–7.8 FPS for pixel-level temporal restoration; "
+                if Path(model_path).name != "yolo11s.pt"
+                else "Existing stored project measurements were approximately 21.5 FPS for raw and 7.6–7.8 FPS for pixel-level temporal restoration; "
+            )
+            + "hardware/runtime state can make direct absolute comparisons noisy."
+        ),
         "",
         "## Pixel state versus object state",
         "",
-        "Farneback warping plus pixel fusion degraded severe-blur mAP@0.5 from 0.127 to 0.006/0.000. Detection-level persistence leaves raw pixels untouched and instead carries a bounded, decaying tracker state. The tracking result below determines whether that distinction is practically useful rather than merely theoretically promising.",
+        (
+            "Farneback warping plus pixel fusion previously degraded severe-blur YOLO11s mAP@0.5 from 0.127 to 0.006/0.000. "
+            if Path(model_path).name != "yolo11s.pt"
+            else "Farneback warping plus pixel fusion degraded severe-blur mAP@0.5 from 0.127 to 0.006/0.000. "
+        )
+        + "Detection-level persistence leaves raw pixels untouched and instead carries a bounded, decaying tracker state. The current tracking result determines whether that distinction is practically useful rather than merely theoretically promising.",
         "",
         "## Examples and failure modes",
         "",
@@ -900,14 +922,15 @@ def write_report(result_rows, oracle_rows, runtime, best_method, examples, force
         f"Worst stale-failure strip: `{examples.get('stale_false_positive', ['none'])[0] if examples.get('stale_false_positive') else 'none'}`",
         "",
         "Green boxes are raw YOLO, magenta boxes are tracker/persistent state, and red target-frame boxes are GT. Lost and stale-false-positive folders are included alongside successful and neutral examples to avoid success-only selection.",
-        "Because the selected safety-preserving persistence wrapper loses no raw GT detections, its `lost/` examples show the standard ByteTrack baseline suppressing current detections rather than a persistence loss.",
+        f"Because the selected safety-preserving persistence wrapper loses no raw GT detections, its `lost/` examples show the standard {best_method.split('_persist_', 1)[0]} baseline suppressing current detections rather than a persistence loss.",
         "",
         "## Reproduction",
         "",
         "```bash",
         "venv/bin/pip install -r requirements.txt",
-        "venv/bin/python -m analysis.temporal_oracle_causal --force-output",
-        "MPLCONFIGDIR=/private/tmp/sight-mpl-cache venv/bin/python -m tracking.evaluate --force-outputs",
+        f"venv/bin/python -m analysis.temporal_oracle --model {model_path} --confidence {CONFIDENCE} --output-dir {RESULTS_CSV.parent} --report {RESULTS_CSV.parent / 'TEMPORAL_ORACLE.md'} --force-outputs",
+        f"venv/bin/python -m analysis.temporal_oracle_causal --instances-csv {causal_oracle_csv.parent / 'temporal_oracle_instances.csv'} --output-csv {causal_oracle_csv} --force-output",
+        f"MPLCONFIGDIR=/private/tmp/sight-mpl-cache venv/bin/python -m tracking.evaluate --model {model_path} --confidence {CONFIDENCE} --cache-dir {causal_oracle_csv.parent / 'temporal_oracle_cache'} --causal-oracle {causal_oracle_csv} --output-dir {RESULTS_CSV.parent} --report {REPORT_MD} --force-outputs",
         "```",
         "",
         "## Conclusion",
@@ -939,14 +962,42 @@ def print_summary(result_rows, best_method):
 
 
 def main():
+    global CONFIDENCE, EXAMPLES_DIR, PLOTS_DIR, REPORT_MD, RESULTS_CSV
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--benchmark-frames", type=int, default=120)
+    parser.add_argument("--model", default=MODEL_PATH)
+    parser.add_argument("--confidence", type=float, default=CONFIDENCE)
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument(
+        "--causal-oracle",
+        type=Path,
+        default=DEFAULT_CAUSAL_ORACLE_CSV,
+    )
+    parser.add_argument("--output-dir", type=Path, default=Path("results"))
+    parser.add_argument("--report", type=Path, default=REPORT_MD)
+    parser.add_argument("--expected-raw-tp", type=int)
+    parser.add_argument("--expected-raw-fp", type=int)
     parser.add_argument("--force-outputs", action="store_true")
     args = parser.parse_args()
 
-    output_files = [RESULTS_CSV, INSTANCES_CSV, RESCUE_SUMMARY_CSV, DETECTIONS_CSV,
-                    ORACLE_COMPARISON_CSV, RUNTIME_CSV, FRAME_STATES_JSONL, REPORT_MD]
+    CONFIDENCE = args.confidence
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    results_csv = args.output_dir / "tracking_results.csv"
+    RESULTS_CSV = results_csv
+    instances_csv = args.output_dir / "tracking_instance_analysis.csv"
+    rescue_summary_csv = args.output_dir / "tracking_rescue_summary.csv"
+    detections_csv = args.output_dir / "tracking_detection_analysis.csv"
+    oracle_comparison_csv = args.output_dir / "tracking_oracle_comparison.csv"
+    runtime_csv = args.output_dir / "tracking_runtime.csv"
+    frame_states_jsonl = args.output_dir / "tracking_frame_states.jsonl"
+    EXAMPLES_DIR = args.output_dir / "tracking_examples"
+    PLOTS_DIR = args.output_dir / "tracking_plots"
+    REPORT_MD = args.report
+
+    output_files = [results_csv, instances_csv, rescue_summary_csv, detections_csv,
+                    oracle_comparison_csv, runtime_csv, frame_states_jsonl, REPORT_MD]
     for path in output_files:
         _safe_output(path, args.force_outputs)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -961,12 +1012,28 @@ def main():
     predictions_by_video, timestamps_by_video = {}, {}
     for video_num in range(1, 8):
         video = f"video{video_num}"
-        predictions_by_video[video], timestamps_by_video[video] = load_video_cache(CACHE_DIR / f"{video}.jsonl")
+        cache_path = args.cache_dir / f"{video}.jsonl"
+        with cache_path.open() as handle:
+            cache_metadata = json.loads(handle.readline())
+        if Path(cache_metadata.get("model", "")).name != Path(args.model).name:
+            raise RuntimeError(
+                f"Cache/model mismatch for {cache_path}: "
+                f"{cache_metadata.get('model')} != {args.model}"
+            )
+        if abs(float(cache_metadata.get("confidence_threshold", -1)) - CONFIDENCE) > 1e-9:
+            raise RuntimeError(
+                f"Cache confidence mismatch for {cache_path}: "
+                f"{cache_metadata.get('confidence_threshold')} != {CONFIDENCE}"
+            )
+        predictions_by_video[video], timestamps_by_video[video] = load_video_cache(cache_path)
 
     locations = target_locations(dataset, metadata, timestamps_by_video)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    model = YOLO(MODEL_PATH)
-    print(f"YOLO11s device={device}, confidence={CONFIDENCE}; evaluating 84 exact target frames")
+    model = YOLO(args.model)
+    print(
+        f"model={args.model}, device={device}, confidence={CONFIDENCE}; "
+        "evaluating 84 exact target frames"
+    )
     raw_by_filename = infer_exact_targets(model, device, dataset, args.batch_size)
 
     frame_states, tracker_runtime = run_trackers(predictions_by_video)
@@ -974,8 +1041,16 @@ def main():
         dataset, raw_by_filename, frame_states, locations
     )
     raw = next(row for row in result_rows if row["method"] == "raw" and row["quality_group"] == "overall")
-    if (raw["true_positives"], raw["false_positives"]) != (90, 13):
-        raise RuntimeError(f"Raw baseline mismatch: expected TP=90 FP=13, got TP={raw['true_positives']} FP={raw['false_positives']}")
+    expected_tp, expected_fp = args.expected_raw_tp, args.expected_raw_fp
+    if expected_tp is None and expected_fp is None and Path(args.model).name == "yolo11s.pt":
+        expected_tp, expected_fp = 90, 13
+    if (expected_tp is None) != (expected_fp is None):
+        raise ValueError("Pass both --expected-raw-tp and --expected-raw-fp, or neither")
+    if expected_tp is not None and (raw["true_positives"], raw["false_positives"]) != (expected_tp, expected_fp):
+        raise RuntimeError(
+            f"Raw baseline mismatch: expected TP={expected_tp} FP={expected_fp}, "
+            f"got TP={raw['true_positives']} FP={raw['false_positives']}"
+        )
 
     tracking_overall = [row for row in result_rows if row["quality_group"] == "overall" and row["method"] != "raw"]
     persistence_overall = [row for row in tracking_overall if "persist" in row["method"]]
@@ -991,25 +1066,39 @@ def main():
     print("Benchmarking sequential single-frame YOLO runtime...")
     yolo_runtime = benchmark_yolo(model, device, frames=args.benchmark_frames)
     runtimes = runtime_rows(result_rows, tracker_runtime, yolo_runtime)
-    oracle_rows = oracle_comparison(result_rows)
+    oracle_rows = oracle_comparison(result_rows, args.causal_oracle)
     summaries = rescue_summary(instance_rows)
 
-    _write_csv(RESULTS_CSV, result_rows, args.force_outputs)
-    _write_csv(INSTANCES_CSV, instance_rows, args.force_outputs)
-    _write_csv(RESCUE_SUMMARY_CSV, summaries, args.force_outputs)
-    _write_csv(DETECTIONS_CSV, detection_rows, args.force_outputs)
-    _write_csv(ORACLE_COMPARISON_CSV, oracle_rows, args.force_outputs)
-    _write_csv(RUNTIME_CSV, runtimes, args.force_outputs)
-    write_frame_states(FRAME_STATES_JSONL, frame_states, timestamps_by_video, args.force_outputs)
+    for rows in (result_rows, instance_rows, detection_rows, oracle_rows, summaries, runtimes):
+        for row in rows:
+            row["model"] = Path(args.model).name
+            row["confidence_threshold"] = CONFIDENCE
+
+    _write_csv(results_csv, result_rows, args.force_outputs)
+    _write_csv(instances_csv, instance_rows, args.force_outputs)
+    _write_csv(rescue_summary_csv, summaries, args.force_outputs)
+    _write_csv(detections_csv, detection_rows, args.force_outputs)
+    _write_csv(oracle_comparison_csv, oracle_rows, args.force_outputs)
+    _write_csv(runtime_csv, runtimes, args.force_outputs)
+    write_frame_states(frame_states_jsonl, frame_states, timestamps_by_video, args.force_outputs)
 
     examples = generate_examples(
         dataset, best_method, instance_rows, detection_rows, frame_states,
         raw_by_filename, predictions_by_video, locations,
     )
     generate_plots(result_rows, oracle_rows, runtimes, best_method)
-    write_report(result_rows, oracle_rows, runtimes, best_method, examples, args.force_outputs)
+    write_report(
+        result_rows,
+        oracle_rows,
+        runtimes,
+        best_method,
+        examples,
+        args.causal_oracle,
+        args.model,
+        args.force_outputs,
+    )
     print_summary(result_rows, best_method)
-    print(f"Wrote {RESULTS_CSV}, {INSTANCES_CSV}, plots/examples, and {REPORT_MD}")
+    print(f"Wrote {results_csv}, {instances_csv}, plots/examples, and {REPORT_MD}")
 
 
 if __name__ == "__main__":

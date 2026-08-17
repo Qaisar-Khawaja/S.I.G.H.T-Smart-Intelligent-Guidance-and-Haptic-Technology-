@@ -20,22 +20,25 @@ For every real frame x every filter in restoration.filters.FILTERS:
      this gives Dataset B a severity breakdown comparable to Dataset
      A's severity curves.
 
-Four outputs:
-  results/results_dataset_b_frames.csv   -- one row per frame x filter
+Four outputs (under --output-dir, which defaults to results/):
+  results_dataset_b_frames.csv   -- one row per frame x filter
                                              (detections/confidence/latency)
-  results/results_dataset_b_summary.csv  -- one row per video x filter
+  results_dataset_b_summary.csv  -- one row per video x filter
                                              (same, averaged)
-  results/results_dataset_b_groundtruth.csv -- one row per filter, using
+  results_dataset_b_groundtruth.csv -- one row per filter, using
                                              only promoted/annotated frames
                                              (empty until you promote some)
-  results/results_dataset_b_by_quality.csv  -- one row per quality_group x
+  results_dataset_b_by_quality.csv  -- one row per quality_group x
                                              filter (empty if no metadata
                                              CSV is present)
 
 Usage:
     python -m restoration.eval_dataset_b
+    python -m restoration.eval_dataset_b \
+        --model yolov8n.pt --output-dir results/yolov8n
 """
 
+import argparse
 import csv
 import os
 import time
@@ -51,10 +54,8 @@ from restoration.detection_metrics import extract_predictions, load_ground_truth
 FRAMES_DIR = "data/frames_real"
 PROMOTED_LABELS_DIR = "data/real_labels"
 METADATA_CSV = "data/frames_real_metadata.csv"
-FRAMES_CSV = "results/results_dataset_b_frames.csv"
-SUMMARY_CSV = "results/results_dataset_b_summary.csv"
-GROUNDTRUTH_CSV = "results/results_dataset_b_groundtruth.csv"
-BY_QUALITY_CSV = "results/results_dataset_b_by_quality.csv"
+DEFAULT_OUTPUT_DIR = "results"
+DEFAULT_MODEL = "yolo11s.pt"
 
 
 def load_quality_groups():
@@ -73,6 +74,23 @@ def load_quality_groups():
 CONFIDENCE = 0.15
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Ultralytics checkpoint path")
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=CONFIDENCE,
+        help="YOLO confidence threshold (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=DEFAULT_OUTPUT_DIR,
+        help="Directory for all four result CSVs (default: %(default)s)",
+    )
+    return parser.parse_args()
+
+
 def find_ground_truth(video_name, stem, img_w, img_h):
     label_path = os.path.join(PROMOTED_LABELS_DIR, video_name, stem + ".txt")
     if not os.path.exists(label_path):
@@ -81,10 +99,18 @@ def find_ground_truth(video_name, stem, img_w, img_h):
 
 
 def main():
-    os.makedirs("results", exist_ok=True)
-    model = YOLO("yolo11s.pt")
+    args = parse_args()
+    os.makedirs(args.output_dir, exist_ok=True)
+    output_paths = {
+        "frames": os.path.join(args.output_dir, "results_dataset_b_frames.csv"),
+        "summary": os.path.join(args.output_dir, "results_dataset_b_summary.csv"),
+        "groundtruth": os.path.join(args.output_dir, "results_dataset_b_groundtruth.csv"),
+        "by_quality": os.path.join(args.output_dir, "results_dataset_b_by_quality.csv"),
+    }
+
+    model = YOLO(args.model)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Running YOLO on device={device}")
+    print(f"Running model={args.model} confidence={args.confidence} device={device}")
 
     video_names = sorted(
         d for d in os.listdir(FRAMES_DIR) if os.path.isdir(os.path.join(FRAMES_DIR, d))
@@ -126,13 +152,20 @@ def main():
             restored, preprocess_ms = metrics.timed(filter_fn)(img)
 
             start = time.perf_counter()
-            results = model(restored, verbose=False, device=device, conf=CONFIDENCE)
+            results = model(
+                restored,
+                verbose=False,
+                device=device,
+                conf=args.confidence,
+            )
             yolo_ms = (time.perf_counter() - start) * 1000
 
             preds = extract_predictions(results[0])
             confidences = [conf for _, conf, _ in preds]
 
             frame_rows.append({
+                "model": os.path.basename(args.model),
+                "confidence_threshold": args.confidence,
                 "video": video_name,
                 "frame": fname,
                 "filter": filter_name,
@@ -154,11 +187,11 @@ def main():
                     bucket["dets"].extend((stem, c, conf, box) for c, conf, box in preds)
                     bucket["gts"].extend((stem, c, box) for c, box in gts)
 
-    with open(FRAMES_CSV, "w", newline="") as f:
+    with open(output_paths["frames"], "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(frame_rows[0].keys()))
         writer.writeheader()
         writer.writerows(frame_rows)
-    print(f"\nWrote {len(frame_rows)} rows to {FRAMES_CSV}")
+    print(f"\nWrote {len(frame_rows)} rows to {output_paths['frames']}")
 
     summary = {}
     for row in frame_rows:
@@ -168,6 +201,8 @@ def main():
     summary_rows = []
     for (video_name, filter_name), rows in sorted(summary.items()):
         summary_rows.append({
+            "model": os.path.basename(args.model),
+            "confidence_threshold": args.confidence,
             "video": video_name,
             "filter": filter_name,
             "n_frames": len(rows),
@@ -178,16 +213,18 @@ def main():
             "total_ms": round(float(np.mean([r["total_ms"] for r in rows])), 3),
         })
 
-    with open(SUMMARY_CSV, "w", newline="") as f:
+    with open(output_paths["summary"], "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(summary_rows[0].keys()))
         writer.writeheader()
         writer.writerows(summary_rows)
-    print(f"Wrote {len(summary_rows)} rows to {SUMMARY_CSV}")
+    print(f"Wrote {len(summary_rows)} rows to {output_paths['summary']}")
 
     gt_rows = []
     for filter_name, pool in gt_pool.items():
         precision, recall, map50 = precision_recall_map(pool["dets"], pool["gts"])
         gt_rows.append({
+            "model": os.path.basename(args.model),
+            "confidence_threshold": args.confidence,
             "filter": filter_name,
             "n_annotated_frames": n_annotated,
             "precision": round(precision, 4),
@@ -195,21 +232,29 @@ def main():
             "map50": round(map50, 4),
         })
 
-    with open(GROUNDTRUTH_CSV, "w", newline="") as f:
+    with open(output_paths["groundtruth"], "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(gt_rows[0].keys()))
         writer.writeheader()
         writer.writerows(gt_rows)
 
     if n_annotated == 0:
-        print(f"Wrote {GROUNDTRUTH_CSV} (empty results -- no frames promoted yet via annotation/promote_labels.py)")
+        print(
+            f"Wrote {output_paths['groundtruth']} "
+            "(empty results -- no frames promoted yet via annotation/promote_labels.py)"
+        )
     else:
-        print(f"Wrote {GROUNDTRUTH_CSV} using {n_annotated} promoted/annotated frames")
+        print(
+            f"Wrote {output_paths['groundtruth']} using "
+            f"{n_annotated} promoted/annotated frames"
+        )
 
     by_quality_rows = []
     for (quality_group, filter_name), pool in sorted(gt_pool_by_quality.items()):
         precision, recall, map50 = precision_recall_map(pool["dets"], pool["gts"])
         n_frames = len({stem for stem, _, _, _ in pool["dets"]} | {stem for stem, _, _ in pool["gts"]})
         by_quality_rows.append({
+            "model": os.path.basename(args.model),
+            "confidence_threshold": args.confidence,
             "quality_group": quality_group,
             "filter": filter_name,
             "n_frames": n_frames,
@@ -219,13 +264,16 @@ def main():
         })
 
     if by_quality_rows:
-        with open(BY_QUALITY_CSV, "w", newline="") as f:
+        with open(output_paths["by_quality"], "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(by_quality_rows[0].keys()))
             writer.writeheader()
             writer.writerows(by_quality_rows)
-        print(f"Wrote {len(by_quality_rows)} rows to {BY_QUALITY_CSV}")
+        print(f"Wrote {len(by_quality_rows)} rows to {output_paths['by_quality']}")
     else:
-        print(f"Skipped {BY_QUALITY_CSV} -- no quality_group metadata found for annotated frames")
+        print(
+            f"Skipped {output_paths['by_quality']} -- "
+            "no quality_group metadata found for annotated frames"
+        )
 
 
 if __name__ == "__main__":

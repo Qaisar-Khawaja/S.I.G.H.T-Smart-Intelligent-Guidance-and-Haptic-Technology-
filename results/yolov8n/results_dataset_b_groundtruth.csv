@@ -1,0 +1,7 @@
+model,confidence_threshold,filter,n_annotated_frames,precision,recall,map50
+yolov8n.pt,0.15,raw,84,0.7667,0.0669,0.0504
+yolov8n.pt,0.15,gaussian,84,0.7419,0.0669,0.0338
+yolov8n.pt,0.15,bilateral,84,0.64,0.0465,0.0279
+yolov8n.pt,0.15,wiener_denoise,84,0.7037,0.0552,0.03
+yolov8n.pt,0.15,wiener_deconv,84,0.0,0.0,0.0
+yolov8n.pt,0.15,clahe,84,0.5686,0.0843,0.051

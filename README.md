@@ -24,6 +24,14 @@ It is not yet integrated into `main.py`; the checked-in live application still
 uses current-frame YOLO detections. The Pico code provides haptic motor output.
 No separate audio-alert implementation is currently tracked in this branch.
 
+The retained original-model validation also evaluates YOLOv8n. On Dataset B,
+raw YOLOv8n reaches 0.0669 recall and 0.0504 mAP@0.5. BoT-SORT with three-frame
+persistence raises these to 0.0727 and 0.0518 by rescuing two clear-frame
+instances with no raw losses or stale persisted false positives. It does not
+improve moderate- or severe-blur recall. Pixel fusion also underperforms raw
+YOLOv8n, while the eight-method union provides no severe-blur recovery; see
+`YOLOV8N_VALIDATION.md`.
+
 ## Datasets
 
 ### Dataset A: controlled synthetic restoration
@@ -77,6 +85,7 @@ locate targets using decoded `CAP_PROP_POS_MSEC` timestamps, as implemented in
 
 Detailed reports:
 
+- `YOLOV8N_VALIDATION.md`
 - `TEMPORAL_RESTORATION.md`
 - `TEMPORAL_ORACLE.md`
 - `TRACKING_PERSISTENCE.md`
@@ -130,9 +139,12 @@ MPS automatically for YOLO inference.
 
 ## Model weights
 
-Active code loads `yolo11s.pt` from the repository root. Ultralytics may
-download the official weight when network access is available; otherwise place
-the file in the project root before running an evaluator.
+The checked-in live application and default evaluator configuration load
+`yolo11s.pt` from the repository root. The original prototype used
+`yolov8n.pt`; retained Dataset A/B validation outputs for that checkpoint are
+documented in `YOLOV8N_VALIDATION.md`. Ultralytics may download official
+weights when network access is available; otherwise place the files in the
+project root before running an evaluator.
 
 Model weights are intentionally ignored by Git. The weight used for the stored
 results has this SHA-256 digest:
@@ -145,6 +157,12 @@ Verify a local copy on macOS/Linux with:
 
 ```bash
 shasum -a 256 yolo11s.pt
+```
+
+The retained YOLOv8n validation weight has SHA-256 digest:
+
+```text
+f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36
 ```
 
 ## Reproducing the experiments
@@ -163,6 +181,14 @@ MPLCONFIGDIR=/private/tmp/sight-mpl-cache python -m analysis.plots
 
 Primary output: `results/results_dataset_a.csv`.
 
+To retain a separate original-model run:
+
+```bash
+python -m restoration.eval_dataset_a \
+  --model yolov8n.pt --confidence 0.25 --seed 0 \
+  --output-csv results/yolov8n/results_dataset_a.csv
+```
+
 ### Dataset B and single-frame filters
 
 ```bash
@@ -177,6 +203,14 @@ Primary outputs:
 - `results/results_dataset_b_groundtruth.csv`
 - `results/results_dataset_b_by_quality.csv`
 - `results/hero_examples/`
+
+To retain separate YOLOv8n outputs:
+
+```bash
+python -m restoration.eval_dataset_b \
+  --model yolov8n.pt --confidence 0.15 \
+  --output-dir results/yolov8n
+```
 
 ### Pixel-level temporal restoration
 

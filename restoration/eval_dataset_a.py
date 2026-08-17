@@ -22,14 +22,21 @@ kernel (a generic guess), which is expected to do little -- showing
 that deconvolution only helps when the degradation is actually blur.
 
 Results are aggregated per (degradation, severity, filter) condition
-across all images -- one row per condition, not per image -- and
-written to results/results_dataset_a.csv.
+across all images -- one row per condition, not per image. The model,
+confidence threshold, random seed, and output path are explicit so runs
+from different YOLO checkpoints cannot silently overwrite one another.
 
 Usage:
     python -m restoration.eval_dataset_a
+    python -m restoration.eval_dataset_a \
+        --model yolov8n.pt \
+        --output-csv results/yolov8n/results_dataset_a.csv \
+        --seed 0
 """
 
+import argparse
 import csv
+import hashlib
 import os
 import time
 
@@ -48,6 +55,9 @@ from restoration.detection_metrics import (
 CLEAN_DIR = "data/clean"
 LABEL_DIR = "data/clean_labels"
 OUTPUT_CSV = "results/results_dataset_a.csv"
+DEFAULT_MODEL = "yolo11s.pt"
+DEFAULT_CONFIDENCE = 0.25
+DEFAULT_SEED = 0
 
 DEGRADATIONS = {
     "noise": (degrade.gaussian_noise, degrade.NOISE_SEVERITIES),
@@ -79,11 +89,47 @@ def build_conditions():
     return conditions
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Ultralytics checkpoint path")
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=DEFAULT_CONFIDENCE,
+        help="YOLO confidence threshold (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--output-csv",
+        default=OUTPUT_CSV,
+        help="Result CSV path (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Base seed for synthetic noise (default: %(default)s)",
+    )
+    return parser.parse_args()
+
+
+def degradation_seed(base_seed, filename, degradation, severity):
+    """Stable per-image seed, shared by every filter in one condition."""
+    key = f"{base_seed}|{filename}|{degradation}|{severity}".encode()
+    return int.from_bytes(hashlib.sha256(key).digest()[:4], "big")
+
+
 def main():
-    os.makedirs("results", exist_ok=True)
-    model = YOLO("yolo11s.pt")
+    args = parse_args()
+    output_dir = os.path.dirname(args.output_csv)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    model = YOLO(args.model)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Running YOLO on device={device}")
+    print(
+        f"Running model={args.model} confidence={args.confidence} "
+        f"seed={args.seed} device={device}"
+    )
 
     image_files = sorted(f for f in os.listdir(CLEAN_DIR) if f.endswith(".jpg"))
 
@@ -118,6 +164,11 @@ def main():
                     degraded = clean
                 else:
                     deg_fn, severities = DEGRADATIONS[deg_name]
+                    # Re-seeding from condition identity gives every filter the
+                    # exact same noisy/low-light input and makes reruns stable.
+                    np.random.seed(
+                        degradation_seed(args.seed, fname, deg_name, sev_name)
+                    )
                     degraded = deg_fn(clean, **severities[sev_name])
 
                 restored, preprocess_ms = apply_filter(
@@ -129,7 +180,12 @@ def main():
                 preprocess_ms_vals.append(preprocess_ms)
 
                 start = time.perf_counter()
-                results = model(restored, verbose=False, device=device)
+                results = model(
+                    restored,
+                    verbose=False,
+                    device=device,
+                    conf=args.confidence,
+                )
                 yolo_ms_vals.append((time.perf_counter() - start) * 1000)
 
                 preds = extract_predictions(results[0])
@@ -141,6 +197,9 @@ def main():
             mean_yolo_ms = float(np.mean(yolo_ms_vals))
 
             rows.append({
+                "model": os.path.basename(args.model),
+                "confidence": args.confidence,
+                "seed": args.seed,
                 "degradation": deg_name,
                 "severity": sev_name or "-",
                 "filter": filter_name,
@@ -155,12 +214,12 @@ def main():
                 "n_images": len(image_files),
             })
 
-    with open(OUTPUT_CSV, "w", newline="") as f:
+    with open(args.output_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"\nWrote {len(rows)} rows to {OUTPUT_CSV}")
+    print(f"\nWrote {len(rows)} rows to {args.output_csv}")
 
 
 if __name__ == "__main__":

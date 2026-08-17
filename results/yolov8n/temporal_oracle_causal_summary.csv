@@ -1,0 +1,5 @@
+quality_group,n_gt_instances,raw_detected,raw_recall,past1_recoverable_misses,past1_recall,future1_recoverable_misses,future1_recall,bidirectional_pm1_recoverable_misses,bidirectional_pm1_recall,past3_recoverable_misses,past3_recall,future3_recoverable_misses,future3_recall,bidirectional_pm3_recoverable_misses,bidirectional_pm3_recall,past5_recoverable_misses,past5_recall,future5_recoverable_misses,future5_recall,bidirectional_pm5_recoverable_misses,bidirectional_pm5_recall
+overall,344,23,0.0669,5,0.0814,10,0.0959,14,0.1076,12,0.1017,15,0.1105,26,0.1424,16,0.1134,22,0.1308,36,0.1715
+clear,125,14,0.112,2,0.128,8,0.176,9,0.184,7,0.168,11,0.2,17,0.248,9,0.184,15,0.232,22,0.288
+moderate_blur,154,8,0.0519,3,0.0714,2,0.0649,5,0.0844,4,0.0779,4,0.0779,8,0.1039,6,0.0909,7,0.0974,13,0.1364
+severe_blur,65,1,0.0154,0,0.0154,0,0.0154,0,0.0154,1,0.0308,0,0.0154,1,0.0308,1,0.0308,0,0.0154,1,0.0308

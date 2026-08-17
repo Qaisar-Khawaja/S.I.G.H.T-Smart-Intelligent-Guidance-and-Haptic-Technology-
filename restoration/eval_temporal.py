@@ -3,9 +3,8 @@ Part 5-9 orchestrator: evaluates whether temporal (multi-frame,
 optical-flow-aligned) restoration improves YOLO detection on Dataset B,
 compared with raw input and the existing single-frame filters.
 
-Uses the same 84 ground-truth-annotated real frames, YOLO11s model,
-confidence threshold (0.15, matching main.py's live setting -- see
-eval_dataset_b.py's module docstring), and IoU/mAP scoring
+Uses the same 84 ground-truth-annotated real frames, an explicitly selected
+YOLO checkpoint, confidence threshold (0.15 by default), and IoU/mAP scoring
 (restoration.detection_metrics) as eval_dataset_b.py. Only the set of
 preprocessing methods under comparison is extended.
 
@@ -42,6 +41,8 @@ Outputs (never overwrites eval_dataset_b.py's results/results_dataset_b_*.csv):
 Usage:
     python -m restoration.eval_temporal
     python -m restoration.eval_temporal --offset 2 --debug-per-group 3
+    python -m restoration.eval_temporal \
+        --model yolov8n.pt --output-dir results/yolov8n
 """
 
 import argparse
@@ -214,7 +215,12 @@ def compute_metrics_rows(pools, timing):
 
 
 def main():
+    global CONFIDENCE
+
     parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default="yolo11s.pt")
+    parser.add_argument("--confidence", type=float, default=CONFIDENCE)
+    parser.add_argument("--output-dir", default="results")
     parser.add_argument("--offset", type=int, default=1,
                          help="neighbor frame offset, i.e. use I(t-offset)/I(t+offset) (default: 1)")
     parser.add_argument("--debug-per-group", type=int, default=2,
@@ -223,8 +229,12 @@ def main():
                          help="only process the first N frames (debugging/smoke-testing)")
     args = parser.parse_args()
 
-    os.makedirs("results", exist_ok=True)
-    os.makedirs(DEBUG_DIR, exist_ok=True)
+    CONFIDENCE = args.confidence
+    results_csv = os.path.join(args.output_dir, "temporal_results.csv")
+    frame_analysis_csv = os.path.join(args.output_dir, "temporal_frame_analysis.csv")
+    debug_dir = os.path.join(args.output_dir, "temporal_examples", "debug")
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(debug_dir, exist_ok=True)
 
     print("Loading Dataset B (84 annotated real frames)...")
     dataset = load_dataset()
@@ -235,9 +245,9 @@ def main():
     print(f"Building temporal neighbor bundles (offset={args.offset})...")
     bundles = neighbors_mod.build_neighbor_bundles(offset=args.offset)
 
-    model = YOLO("yolo11s.pt")
+    model = YOLO(args.model)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"Running YOLO11s on device={device}, confidence={CONFIDENCE}")
+    print(f"Running model={args.model} on device={device}, confidence={CONFIDENCE}")
 
     pools = defaultdict(lambda: {"dets": [], "gts": []})
     timing = defaultdict(lambda: {"preprocess_ms": [], "total_ms": []})
@@ -313,6 +323,8 @@ def main():
             for method in TEMPORAL_METHODS:
                 for row in frame_class_comparison(gts, preds_by_method["raw"], preds_by_method[method]):
                     frame_analysis_rows.append({
+                        "model": os.path.basename(args.model),
+                        "confidence_threshold": CONFIDENCE,
                         "frame_id": image_id,
                         "video": video_name,
                         "quality_group": quality_group,
@@ -323,7 +335,7 @@ def main():
             # Part 2: debug panels, a couple per quality group
             if debug_counts[quality_group] < args.debug_per_group:
                 debug_counts[quality_group] += 1
-                out_path = os.path.join(DEBUG_DIR, f"{video_name}_{stem}_debug.jpg")
+                out_path = os.path.join(debug_dir, f"{video_name}_{stem}_debug.jpg")
                 restore.save_debug_panel(bundle, aligned, temporal_results, out_path)
         else:
             print(f"    WARNING: no neighbor bundle for {filename} (source video missing?), skipping temporal methods")
@@ -333,18 +345,22 @@ def main():
           f"next missing={n_next_missing} rejected={n_next_rejected}")
 
     rows = compute_metrics_rows(pools, timing)
-    with open(RESULTS_CSV, "w", newline="") as f:
+    for row in rows:
+        row["model"] = os.path.basename(args.model)
+        row["confidence_threshold"] = CONFIDENCE
+        row["neighbor_offset"] = args.offset
+    with open(results_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
-    print(f"Wrote {len(rows)} rows to {RESULTS_CSV}")
+    print(f"Wrote {len(rows)} rows to {results_csv}")
 
     if frame_analysis_rows:
-        with open(FRAME_ANALYSIS_CSV, "w", newline="") as f:
+        with open(frame_analysis_csv, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(frame_analysis_rows[0].keys()))
             writer.writeheader()
             writer.writerows(frame_analysis_rows)
-        print(f"Wrote {len(frame_analysis_rows)} rows to {FRAME_ANALYSIS_CSV}")
+        print(f"Wrote {len(frame_analysis_rows)} rows to {frame_analysis_csv}")
 
     print("\n=== SUMMARY (overall, all 84 frames) ===")
     for row in rows:

@@ -1,0 +1,5 @@
+model,confidence_threshold,neighbor_offset,quality_group,n_gt_instances,raw_recall,union_recall,recall_gain
+yolov8n.pt,0.15,1,overall,344,0.0669,0.1105,0.0436
+yolov8n.pt,0.15,1,clear,125,0.112,0.208,0.096
+yolov8n.pt,0.15,1,moderate_blur,154,0.0519,0.0714,0.0195
+yolov8n.pt,0.15,1,severe_blur,65,0.0154,0.0154,0.0

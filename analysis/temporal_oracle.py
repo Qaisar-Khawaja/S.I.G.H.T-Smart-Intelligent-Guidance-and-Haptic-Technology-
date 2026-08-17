@@ -499,11 +499,11 @@ def write_report(path: Path, summary_rows, force=False):
         "",
         "## Motivation",
         "",
-        "Pixel-level restoration did not improve Dataset B over raw YOLO11s, so this experiment tests whether correct object detections exist in nearby raw video frames and could theoretically bridge target-frame misses at the detection/state level.",
+        f"Pixel-level restoration did not reliably improve Dataset B over raw {Path(MODEL_PATH).stem}, so this experiment tests whether correct object detections exist in nearby raw video frames and could theoretically bridge target-frame misses at the detection/state level.",
         "",
         "## Dataset and baseline",
         "",
-        f"The evaluation uses all 84 annotated target frames ({overall['n_gt_instances']} scored GT instances) from the seven original cane-camera videos. Target-frame detections use the exact annotated PNGs. YOLO11s (`{MODEL_PATH}`), confidence {CONFIDENCE}, the repository's relevant-class filter, and same-class IoU >= {IOU_THRESHOLD} matching are unchanged from Dataset B.",
+        f"The evaluation uses all 84 annotated target frames ({overall['n_gt_instances']} scored GT instances) from the seven original cane-camera videos. Target-frame detections use the exact annotated PNGs. `{MODEL_PATH}`, confidence {CONFIDENCE}, the repository's relevant-class filter, and same-class IoU >= {IOU_THRESHOLD} matching are unchanged from Dataset B.",
         "The ±1, ±3, and ±5 windows correspond to approximately ±33 ms, ±100 ms, and ±167 ms at 30 FPS (video 1 metadata reports 29.7 FPS; the others report 30 FPS).",
         "",
         "## Association method",
@@ -565,14 +565,41 @@ def print_summary(summary_rows):
 
 
 def main():
+    global MODEL_PATH, CONFIDENCE
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--model", default=MODEL_PATH)
+    parser.add_argument("--confidence", type=float, default=CONFIDENCE)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("results"),
+        help="Directory for cache shards and oracle CSV/JSONL outputs",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=REPORT_MD,
+        help="Markdown report path",
+    )
+    parser.add_argument(
+        "--expected-raw-recall",
+        type=float,
+        help="Optional target-frame baseline check",
+    )
     parser.add_argument("--rebuild-cache", action="store_true")
     parser.add_argument("--force-outputs", action="store_true")
     args = parser.parse_args()
 
-    Path("results").mkdir(exist_ok=True)
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    MODEL_PATH = args.model
+    CONFIDENCE = args.confidence
+    cache_dir = args.output_dir / "temporal_oracle_cache"
+    predictions_jsonl = args.output_dir / "temporal_oracle_predictions.jsonl"
+    summary_csv = args.output_dir / "temporal_oracle_summary.csv"
+    instances_csv = args.output_dir / "temporal_oracle_instances.csv"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     dataset = load_dataset()
     metadata = load_metadata()
     if len(dataset) != 84:
@@ -582,13 +609,16 @@ def main():
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     model = YOLO(MODEL_PATH)
-    print(f"Temporal oracle: YOLO11s, device={device}, confidence={CONFIDENCE}, target IoU={IOU_THRESHOLD}")
+    print(
+        f"Temporal oracle: model={MODEL_PATH}, device={device}, "
+        f"confidence={CONFIDENCE}, target IoU={IOU_THRESHOLD}"
+    )
 
     cache_paths = []
     for video_num in range(1, 8):
         video_name = f"video{video_num}"
         video_path = VIDEO_DIR / f"{video_name}.mov"
-        cache_path = CACHE_DIR / f"{video_name}.jsonl"
+        cache_path = cache_dir / f"{video_name}.jsonl"
         expected = _cache_metadata(video_name, video_path)
         if args.rebuild_cache or not _cache_is_valid(cache_path, expected):
             infer_video(model, device, video_name, video_path, cache_path, args.batch_size)
@@ -596,10 +626,10 @@ def main():
             print(f"  {video_name}: reusing valid cache {cache_path}")
         cache_paths.append(cache_path)
 
-    if PREDICTIONS_JSONL.exists() and not args.force_outputs:
-        raise FileExistsError(f"Refusing to overwrite {PREDICTIONS_JSONL}; pass --force-outputs")
-    consolidate_caches(cache_paths, PREDICTIONS_JSONL)
-    print(f"Wrote reusable full-video predictions to {PREDICTIONS_JSONL}")
+    if predictions_jsonl.exists() and not args.force_outputs:
+        raise FileExistsError(f"Refusing to overwrite {predictions_jsonl}; pass --force-outputs")
+    consolidate_caches(cache_paths, predictions_jsonl)
+    print(f"Wrote reusable full-video predictions to {predictions_jsonl}")
 
     predictions_by_video, timestamps_by_video = {}, {}
     for video_num, cache_path in enumerate(cache_paths, start=1):
@@ -610,17 +640,23 @@ def main():
         batch_size=args.batch_size,
     )
     raw_recall = sum(bool(row["raw_detected"]) for row in instance_rows) / len(instance_rows)
-    if abs(raw_recall - 0.2616) > 0.005:
-        raise RuntimeError(f"Raw baseline validation failed: expected approximately 0.2616, got {raw_recall:.4f}")
+    expected_raw_recall = args.expected_raw_recall
+    if expected_raw_recall is None and Path(MODEL_PATH).name == "yolo11s.pt":
+        expected_raw_recall = 0.2616
+    if expected_raw_recall is not None and abs(raw_recall - expected_raw_recall) > 0.005:
+        raise RuntimeError(
+            "Raw baseline validation failed: expected approximately "
+            f"{expected_raw_recall:.4f}, got {raw_recall:.4f}"
+        )
 
     summary_rows = summarize(instance_rows, dataset)
-    write_csv(INSTANCES_CSV, instance_rows, force=args.force_outputs)
-    write_csv(SUMMARY_CSV, summary_rows, force=args.force_outputs)
-    meaningful = write_report(REPORT_MD, summary_rows, force=args.force_outputs)
+    write_csv(instances_csv, instance_rows, force=args.force_outputs)
+    write_csv(summary_csv, summary_rows, force=args.force_outputs)
+    meaningful = write_report(args.report, summary_rows, force=args.force_outputs)
     print_summary(summary_rows)
-    print(f"\nWrote {len(instance_rows)} instances to {INSTANCES_CSV}")
-    print(f"Wrote summary to {SUMMARY_CSV}")
-    print(f"Wrote report to {REPORT_MD}")
+    print(f"\nWrote {len(instance_rows)} instances to {instances_csv}")
+    print(f"Wrote summary to {summary_csv}")
+    print(f"Wrote report to {args.report}")
     print("Phase 2 decision:", "PROCEED" if meaningful else "STOP")
 
 

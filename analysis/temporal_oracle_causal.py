@@ -57,17 +57,20 @@ def summarize(rows):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--instances-csv", type=Path, default=INSTANCES_CSV)
+    parser.add_argument("--output-csv", type=Path, default=OUTPUT_CSV)
     parser.add_argument("--force-output", action="store_true")
     args = parser.parse_args()
-    with INSTANCES_CSV.open() as handle:
+    with args.instances_csv.open() as handle:
         rows = list(csv.DictReader(handle))
     if len(rows) != 344:
         raise RuntimeError(f"Expected 344 oracle instances, found {len(rows)}")
-    if OUTPUT_CSV.exists() and not args.force_output:
-        raise FileExistsError(f"Refusing to overwrite {OUTPUT_CSV}")
+    if args.output_csv.exists() and not args.force_output:
+        raise FileExistsError(f"Refusing to overwrite {args.output_csv}")
 
     summaries = summarize(rows)
-    with OUTPUT_CSV.open("w", newline="") as handle:
+    args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    with args.output_csv.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(summaries[0]))
         writer.writeheader()
         writer.writerows(summaries)
@@ -79,7 +82,7 @@ def main():
             f"{row['past1_recall']:.3f}   {row['past3_recall']:.3f}   {row['past5_recall']:.3f}   "
             f"{row['future5_recall']:.3f}    {row['bidirectional_pm5_recall']:.3f}"
         )
-    print(f"Wrote {OUTPUT_CSV}")
+    print(f"Wrote {args.output_csv}")
 
 
 if __name__ == "__main__":
