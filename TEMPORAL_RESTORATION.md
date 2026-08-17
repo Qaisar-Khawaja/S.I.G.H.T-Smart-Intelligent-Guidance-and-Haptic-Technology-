@@ -17,7 +17,7 @@ genuinely lost information that no single-frame restoration can recover, can
 
 **Methodological constraint, stated explicitly:** neighboring frames are used only
 to construct a restored version of the annotated target frame I(t). Evaluation is
-always performed against I(t)'s original ground-truth annotation — no new ground
+always performed against I(t)'s original ground-truth annotation; no new ground
 truth is created for neighboring frames, and the restored output is always warped
 into I(t)'s coordinate system so the existing boxes in `data/real_labels/` stay
 valid for every method, including the temporal ones.
@@ -28,13 +28,13 @@ valid for every method, including the temporal ones.
 
 Each of the 84 annotated Dataset B frames is matched back to its source video
 (`data/videos/videoN.mov`) and exact position in that video, then I(t-1) and I(t+1)
-are decoded fresh from the video (I(t) itself is never re-decoded — it's loaded
+are decoded fresh from the video (I(t) itself is never re-decoded; it is loaded
 directly from `data/frames_real/`, the exact pixels the ground truth was drawn
 against).
 
 Locating I(t) in the source video turned out to be non-trivial: the metadata's
 `frame_number` column was computed as `round(timestamp_sec * fps)`, which assumes a
-constant frame rate. Empirically, `video1.mov` is variable-frame-rate — sequentially
+constant frame rate. Empirically, `video1.mov` is variable-frame-rate; sequentially
 decoding it and comparing against the known-correct stored target image showed
 `frame_number` landing up to **6 frames off** from where OpenCV's decode actually
 was at that timestamp (video2/video3, which are CFR, matched exactly). The fix:
@@ -49,7 +49,7 @@ raising, which downstream fusion treats as "unavailable, redistribute its weight
 
 ### 2. Optical-flow alignment (`temporal/optical_flow.py`)
 
-Raw neighbor frames are never blended directly — the camera is moving, so that would
+Raw neighbor frames are never blended directly because the camera is moving; doing so would
 just produce ghosting. Each neighbor is aligned into I(t)'s coordinate frame with
 OpenCV's Farneback dense optical flow: `flow = calcOpticalFlowFarneback(target_gray,
 neighbor_gray, ...)` gives, for each pixel in the target, the displacement to find
@@ -65,7 +65,7 @@ invalid via a `valid_mask` rather than silently blended in as black.
   renormalized.
 - **`temporal_quality_weighted`**: each available frame is weighted by
   `sqrt(laplacian_variance)` (sqrt to dampen the ratio when one frame is much
-  sharper — using raw variance directly produced unstably extreme weights during
+  sharper; using raw variance directly produced unstably extreme weights during
   development), normalized to sum to 1, then the target's weight is floored at 0.3
   (rescaling the neighbor share proportionally) so a sharp neighbor can never fully
   outvote the frame the ground truth was actually drawn against.
@@ -76,13 +76,13 @@ After warping, each neighbor is scored on: fraction of valid (in-frame) pixels
 (≥0.6 required), mean absolute photometric difference against the target on valid
 pixels (≤40 on a 0-255 scale), SSIM against the target (≥0.25), and mean flow
 magnitude on valid pixels (≤60px). Failing any check rejects that neighbor (weight
-→ 0, redistributed). This is deliberately simple — three independent thresholds, no
-learned selector — and every rejection is logged.
+→ 0, redistributed). This is deliberately simple: three independent thresholds, no
+learned selector, and every rejection is logged.
 
 ### 5. Evaluation (`restoration/eval_temporal.py`)
 
 Same 84 ground-truth-annotated frames, same YOLO11s model, same confidence
-threshold (0.15, matching `main.py`'s live setting — see `eval_dataset_b.py`), same
+threshold (0.15, matching `main.py`'s live setting; see `eval_dataset_b.py`), same
 IoU/mAP scoring (`restoration.detection_metrics`, extended with mAP@0.5:0.95 via
 the same tested greedy-matching machinery) as the existing Dataset B evaluation.
 Methods compared: `raw`, `wiener_denoise`, `wiener_deconv`, `clahe`,
@@ -101,7 +101,7 @@ same greedy IoU matcher used for mAP, and classifies each as `rescued`, `lost`,
 84 hand-annotated real frames across 7 cane-sweep videos, quality-grouped as
 `clear` (28), `moderate_blur` (35), `severe_blur` (21) via
 `data/frames_real_metadata.csv`. 81 of 84 frames have at least one ground-truth
-object in a scored class (`restoration.classes.RELEVANT_CLASSES`) — 3 frames'
+object in a scored class (`restoration.classes.RELEVANT_CLASSES`); 3 frames'
 annotations only cover out-of-scope classes and are excluded from the pooled
 precision/recall/mAP, matching how `precision_recall_map` already treats empty
 ground truth.
@@ -113,29 +113,29 @@ noticeably lower than mAP@0.5, since it also scores against much stricter IoU
 thresholds. Here they're close (e.g. raw: 0.259 vs 0.259; temporal_fixed: 0.210 vs
 0.201). The threshold sweep itself was double-checked independently outside the
 eval script (0.5, 0.55, ..., 0.95, matching per-detection at each threshold) and is
-correct — this isn't a bug reusing the mAP@0.5 result.
+correct; this isn't a bug reusing the mAP@0.5 result.
 
 The real explanation: raw YOLO11s's correct detections on this dataset are
-**pixel-near-perfect** far more often than not. Checking directly — running raw
+**pixel-near-perfect** far more often than not. A direct check running raw
 YOLO11s against all 84 frames and comparing its own predictions to the
-(human-reviewed, confirmed-correct) ground truth — found 87 of 344 ground-truth
+(human-reviewed, confirmed-correct) ground truth found 87 of 344 ground-truth
 boxes (25.3%, across 35 frames) match a raw prediction at IoU > 0.98, several to 6
 decimal places. That's not a labeling problem (confirmed: every one of the 84
 frames was reviewed and corrected by hand in labelImg; boxes that match YOLO's
 draft closely simply mean YOLO got that particular object right and the correction
 was "leave it as-is"). It does mean raw's detection behavior on this dataset is
-strongly **bimodal** — an object is either found almost exactly right, or missed
+strongly **bimodal**: an object is either found almost exactly right, or missed
 entirely, with very little of the "found it but the box is a bit loose" middle
 ground that would normally separate mAP@0.5 from mAP@0.5:0.95. That's plausible
 here: many of the annotated objects (chairs, tables, doorframes) are large,
 high-contrast, and fill much of the frame, so once YOLO locks onto one there's
-little room for boundary ambiguity — a plausible dataset characteristic (curated,
+little room for boundary ambiguity. This is a plausible dataset characteristic (curated,
 small, dominated by big obstacles) rather than a general property to expect on
 messier data.
 
 ## Results (actual numbers, offset=1)
 
-*(mAP@0.5 and mAP@0.5:0.95 sit unusually close together in this table — checked and
+*(mAP@0.5 and mAP@0.5:0.95 sit unusually close together in this table; checked and
 confirmed not a threshold-sweep bug; see the note above for why.)*
 
 ### Overall (81 scored frames)
@@ -160,7 +160,7 @@ confirmed not a threshold-sweep bug; see the note above for why.)*
 | temporal_fixed | 0.312 | **0.202** | 0.006 |
 | temporal_quality_weighted | 0.302 | **0.195** | 0.000 |
 
-(`wiener_deconv=0.000` everywhere is a pre-existing, already-documented result —
+(`wiener_deconv=0.000` everywhere is a pre-existing, already-documented result;
 `results/results_dataset_b_groundtruth.csv` shows the same thing; it's not
 something this experiment introduced. Its fixed-kernel assumption simply doesn't
 hold on footage with no known blur kernel.)
@@ -184,10 +184,10 @@ Broken down by severity for `temporal_quality_weighted`:
 At offset=1: 0 neighbors rejected by the quality gate across all 84 frames; 6 `prev`
 neighbors missing (video-start boundary), 0 `next` missing. In other words, the gate
 as configured judged every warped neighbor "acceptable" by its coarse global
-metrics (valid-pixel fraction, mean photometric diff, SSIM, flow magnitude) — yet
+metrics (valid-pixel fraction, mean photometric diff, SSIM, flow magnitude), yet
 severe_blur mAP still collapsed to near zero. **This is a real limitation, not
 hidden**: the gate's thresholds were tuned by eyeballing a handful of dev frames,
-not to specifically catch the failure mode that actually hurt — the fused image
+not to specifically catch the failure mode that actually hurt; the fused image
 still often *looks* globally plausible (right brightness, right rough structure)
 even where the fusion has smeared a moving person or object into the background
 enough to break YOLO's edge cues. A qualitative example of exactly this is saved at
@@ -198,28 +198,28 @@ background, undetected.
 ## Finding
 
 **Outcome C, with Outcome B nuance.** Temporal restoration does not beat raw
-overall, and gets *categorically worse* —
-not just "no better" — specifically under severe blur, where the lightweight
+overall, and gets *categorically worse*:
+not just "no better," but specifically under severe blur, where the lightweight
 Farneback alignment breaks down on exactly the frames with the most ego-motion
 (large cane sweeps), producing ghosting/smearing that destroys the edge
 information YOLO needs. `temporal_quality_weighted` hits **mAP@0.5 = 0.000** on
-severe_blur — worse than doing nothing.
+severe_blur, which is worse than doing nothing.
 
 The picture is more mixed at lower severities: on `moderate_blur`,
 `temporal_fixed` (0.202) modestly *beats* every single-frame filter (wiener_denoise
 0.223 is close but clahe collapses to 0.088), though it still trails raw (0.266).
 On `clear` frames temporal restoration is competitive with wiener_denoise/clahe but
 below raw. And a handful of genuine per-detection rescues did happen (3 and 2,
-respectively) — e.g. a person and a chair caught only after temporal fusion — so
+respectively); for example, a person and a chair were caught only after temporal fusion, so
 multi-frame information is not *useless*, it's just outweighed roughly 10:1 by
 detections it costs, with severe blur alone accounting for the worst of that
 deficit.
 
 **Interpretation**: large ego-motion from the cane's sweeping motion makes
 lightweight optical-flow alignment unreliable specifically where it's needed most
-(severe blur = fastest motion). A more capable video-restoration model — one with
+(severe blur = fastest motion). A more capable video-restoration model with
 learned motion compensation robust to large displacements, rather than classical
-dense flow — is a more promising direction than tuning this baseline further. This
+dense flow is a more promising direction than tuning this baseline further. This
 matches the domain-gap story from the single-frame filters: real cane-camera motion
 doesn't match the assumptions of the lightweight methods tried so far, whether
 single-frame or multi-frame.
@@ -227,7 +227,7 @@ single-frame or multi-frame.
 ## Runtime
 
 Temporal preprocessing (alignment + fusion, both neighbors) costs ~104-115ms/frame
-on CPU/MPS (Farneback flow dominates), on top of ~20-30ms YOLO inference — about
+on CPU/MPS (Farneback flow dominates), on top of ~20-30ms YOLO inference, yielding about
 7.5 FPS total vs. raw's ~21 FPS (severe/moderate_blur, where preprocessing is the
 whole cost since raw has none) or ~10 FPS on clear frames (YOLO alone is slower on
 frames with more/larger detections). Not real-time on this hardware without
@@ -236,7 +236,7 @@ further optimization (e.g. a smaller flow resolution).
 ## Limitations
 
 - The alignment quality gate did not catch the failure mode that mattered most
-  (see above) — its thresholds are a first pass, not validated against the failure
+  (see above); its thresholds are a first pass, not validated against the failure
   cases they were meant to catch.
 - Offset=1 (single adjacent frame each side) was the only offset evaluated in the
   full run; `--offset` is wired through for testing wider gaps like I(t-2, t, t+2),
@@ -245,7 +245,7 @@ further optimization (e.g. a smaller flow resolution).
   displacements or occlusion beyond the coarse-to-fine pyramid, which is exactly
   what breaks on severe blur.
 - Part 12 (pretrained video-deblurring model, e.g. EDVR/RVRT/BasicVSR++) and Part 13
-  (adaptive sharpness-threshold rule) were not attempted — see Priority order below.
+  (adaptive sharpness-threshold rule) were not attempted; see Priority order below.
 
 ## Reproducing
 

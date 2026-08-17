@@ -1,5 +1,5 @@
 """
-Dataset B orchestrator: evaluation on your real cane-camera footage.
+Dataset B orchestrator: evaluation on real cane-camera footage.
 
 Unlike eval_dataset_a.py, no synthetic degradation is applied here --
 these frames (data/frames_real/video1..7/) are already really degraded
