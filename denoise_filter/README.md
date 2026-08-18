@@ -1,14 +1,13 @@
-# S.I.G.H.T. Smart Cane Computer Vision
+# S.I.G.H.T. Image Restoration and Tracking Study
 
-S.I.G.H.T. is a computer-vision prototype for assistive navigation. The
-checked-in live application uses a camera and YOLO11s to identify relevant
-obstacles, estimate their direction and distance tier, choose the most urgent
-hazard, and send a compact command to a Raspberry Pi Pico 2 W.
+This directory contains the complete experimental path for the S.I.G.H.T.
+smart-cane computer-vision study: controlled image restoration, evaluation on
+real cane-camera footage, pixel-level temporal fusion, filter and temporal
+oracles, and detection-level tracking with bounded persistence.
 
-The repository also contains the complete experimental path that led to the
-current design: controlled image restoration, evaluation on real cane-camera
-footage, pixel-level temporal fusion, filter and temporal oracles, and
-detection-level tracking with bounded persistence.
+The live cane application is maintained in the parent repository and uses
+YOLOv8n. The experimental filters and trackers in this directory were evaluated
+offline and are not integrated into that live application.
 
 ## Current status
 
@@ -20,9 +19,8 @@ The strongest real-camera result is one-frame ByteTrack persistence:
 | ByteTrack + 1-frame persistence | 0.8716 | 0.2762 | 0.2698 | 5 | 0 | 1 |
 
 This tracking method is implemented and evaluated in `tracking/evaluate.py`.
-It is not yet integrated into `main.py`; the checked-in live application still
-uses current-frame YOLO detections. The Pico code provides haptic motor output.
-No separate audio-alert implementation is currently tracked in this branch.
+It is not integrated into the parent repository's `main.py`; the live
+application still uses current-frame YOLOv8n detections.
 
 The retained original-model validation also evaluates YOLOv8n. On Dataset B,
 raw YOLOv8n reaches 0.0669 recall and 0.0504 mAP@0.5. BoT-SORT with three-frame
@@ -94,10 +92,8 @@ Detailed reports:
 
 ```text
 .
-├── main.py, decision.py, command.py, pico_connection.py
-│   Live host-side vision and command pipeline
 ├── MicroPython/
-│   Pico-side haptic controller
+│   Historical controller copy retained from the experiment branch
 ├── data/
 │   Dataset A, Dataset B, source videos, labels, and metadata
 ├── annotation/
@@ -139,12 +135,11 @@ MPS automatically for YOLO inference.
 
 ## Model weights
 
-The checked-in live application and default evaluator configuration load
-`yolo11s.pt` from the repository root. The original prototype used
-`yolov8n.pt`; retained Dataset A/B validation outputs for that checkpoint are
-documented in `YOLOV8N_VALIDATION.md`. Ultralytics may download official
-weights when network access is available; otherwise place the files in the
-project root before running an evaluator.
+The default evaluator configuration loads `yolo11s.pt`. The live prototype uses
+`yolov8n.pt`, and retained validation outputs for that checkpoint are documented
+in `YOLOV8N_VALIDATION.md`. Ultralytics may download official weights when
+network access is available; otherwise place the required weight file in this
+directory before running an evaluator.
 
 Model weights are intentionally ignored by Git. The weight used for the stored
 results has this SHA-256 digest:
@@ -167,10 +162,10 @@ f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36
 
 ## Reproducing the experiments
 
-Run commands from the repository root. The repository tracks reference outputs,
-so commands that regenerate them will produce Git changes. Oracle and tracking
-commands deliberately require an explicit force option before overwriting
-existing outputs.
+Run commands from this `denoise_filter` directory. The repository tracks
+reference outputs, so commands that regenerate them will produce Git changes.
+Oracle and tracking commands deliberately require an explicit force option
+before overwriting existing outputs.
 
 ### Dataset A
 
@@ -283,9 +278,10 @@ promotion into `data/real_labels/`.
 
 ## Live application
 
-The live entry point remains:
+The live entry point remains in the parent repository:
 
 ```bash
+cd ..
 python main.py
 ```
 
@@ -296,7 +292,7 @@ be validated on the actual demonstration system before changing them.
 
 ## Evaluation notes
 
-- YOLO confidence is 0.15 for the live and real-camera evaluation paths.
+- YOLO confidence is 0.15 for the real-camera evaluation paths.
 - Relevant classes are defined centrally in `restoration/classes.py`.
 - Detection matching uses same-class IoU >= 0.5.
 - `restoration/detection_metrics.py` is the shared mAP implementation.
