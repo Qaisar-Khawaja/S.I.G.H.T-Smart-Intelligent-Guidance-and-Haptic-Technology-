@@ -127,8 +127,6 @@ def play_for(code):
     """Play the clip for this code's direction, or stop if it has none."""
     if len(code) == 2 and code[1] in TRACKS:
         df_send(DF_PLAY, TRACKS[code[1]])
-    else:
-        df_send(DF_STOP)
 
 
 
