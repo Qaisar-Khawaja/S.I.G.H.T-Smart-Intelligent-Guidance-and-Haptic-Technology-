@@ -1,23 +1,13 @@
 """
 Smart Cane communication layer.
 
-The ONLY file that knows how the laptop reaches the cane.
-main.py, decision.py, and command.py never change when the
-transport changes -- they just call send_command(letter).
-
-WIRED (default):
-    python main.py
-    Uses USB serial, exactly as before. Berry's setup is unaffected.
-
-WIRELESS:
+WIRELESS (Default):
     CANE_MODE=wireless python main.py
-    Sends UDP to the Pico's IP. Get that IP from Thonny's console
-    when the Pico boots, and put it in PICO_IP below.
-
-Neither mode is fatal if the hardware is missing:
-  - wireless: UDP is fire-and-forget, packets evaporate harmlessly
-  - wired: a missing port prints a warning instead of crashing,
-    so the vision pipeline still runs with no board attached
+    Sends UDP to the Pico's IP. 
+    
+WIRED:
+    python main.py
+    Uses USB serial
 """
 
 import os
@@ -31,7 +21,7 @@ if MODE == "wireless":
 
     import socket
 
-    PICO_IP = "172.20.10.10"          # <- from Thonny's console at Pico boot
+    PICO_IP = "172.20.10.10"         
     PORT    = 5005
 
     _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -52,7 +42,7 @@ else:
 
     import serial
 
-    PICO_PORT = "/dev/cu.usbmodem144201"      # <- ls /dev/cu.* to confirm
+    PICO_PORT = "/dev/cu.usbmodem144201"     
     BAUD      = 115200
 
     pico = None
@@ -61,7 +51,7 @@ else:
         pico = serial.Serial(PICO_PORT, BAUD, timeout=1)
         print(f"Cane link: wired -> {PICO_PORT}")
     except Exception as e:
-        # Don't kill the vision pipeline just because no board is plugged in.
+       
         print(f"Serial port unavailable ({e}). Commands will be printed only.")
 
     def send_command(command):

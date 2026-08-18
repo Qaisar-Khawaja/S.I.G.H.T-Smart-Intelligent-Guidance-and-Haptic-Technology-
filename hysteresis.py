@@ -49,17 +49,12 @@ ONE STREAM, BOTH CHANNELS
 
 NOTE ON UNITS
     Thresholds are counted in FRAMES, so the wall-clock delay scales
-    with frame rate. At 15fps, 8 frames is about half a second; if YOLO
-    slows to 5fps that becomes 1.6s and may feel sluggish. Retune
-    FRAMES_TO_RELAX if your measured frame rate changes a lot.
+    with frame rate. At 15fps, 8 frames is about half a second.
 """
 
 import time
 
 
-# Ordering that defines what "more urgent" means. All three MEDIUM codes
-# sit at tier 1 and all three CLOSE codes at tier 2: direction does not
-# affect urgency, which is the whole point of separating the dimensions.
 URGENCY = {
     "S":  0,
     "ML": 1, "MC": 1, "MR": 1,
@@ -69,9 +64,7 @@ URGENCY = {
 FRAMES_TO_ESCALATE = 2      # ~0.13s at 15fps
 FRAMES_TO_RELAX    = 8      # ~0.53s at 15fps
 
-HEARTBEAT_SECONDS  = 1.0    # resend the committed command this often even
-                            # when unchanged, so a dropped UDP packet can't
-                            # strand the cane buzzing or silent
+HEARTBEAT_SECONDS  = 2.0    
 
 
 class CommandStabilizer:
@@ -180,7 +173,7 @@ class CommandStabilizer:
 
         # ── Case 2: agrees with the committed state ──
         # Any agreeing frame wipes out accumulated contrary evidence.
-        # This is what makes brief detection dropouts harmless.
+        # This is makes brief detection dropouts harmless.
         elif raw == self.state:
             self._escalate_count = 0
             self._relax_count = 0

@@ -1,7 +1,7 @@
 important_objects = [
     "person",
     "chair",
-    "bicycle",
-    "car",
+    "bag",
+    "bottle",
     "cell phone",
 ]
