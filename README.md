@@ -1,7 +1,3 @@
-Absolutely. Since this is a **technical project report**, your README should be much shorter than the paper and focus on **what the project is, how to run it, hardware/software requirements, project structure, and key findings**.
-
-Here’s a polished README you can put directly in your GitHub repository:
-
 # SmartCane: A Vision-Guided Navigation Aid for Visually Impaired Users
 
 **Khawaja Faiza Qaisar – 217948233**
@@ -594,20 +590,3 @@ K. F. Qaisar, T. Tran, and R. Balroop,
 "SmartCane: A Vision-Guided Navigation Aid for Visually Impaired Users,"
 2026.
 ```
-
----
-
-## Status
-
-**Prototype Status:** Working prototype
-
-**Object Detection:** Implemented
-**Hazard Prioritization:** Implemented
-**Haptic Feedback:** Implemented
-**Serial Communication:** Implemented
-**Safety Shutdown:** Implemented
-**Image Restoration Study:** Completed
-**Temporal Detection Study:** Completed
-**Live Object Persistence:** Future integration
-**Audio Testing:** Ongoing
-**Full Physical Assembly Testing:** Ongoing
