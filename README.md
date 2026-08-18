@@ -541,46 +541,6 @@ Overall, the experiments suggest that SmartCane should prioritize **detector cap
 
 ---
 
-## Repository Structure
-
-A recommended repository structure is:
-
-```text
-SmartCane/
-│
-├── README.md
-│
-├── host/
-│   ├── detection.py
-│   ├── hazard_scoring.py
-│   └── serial_control.py
-│
-├── pico/
-│   └── main.py
-│
-├── restoration/
-│   ├── synthetic_experiments.py
-│   ├── real_footage_experiments.py
-│   └── temporal_fusion.py
-│
-├── tracking/
-│   └── temporal_persistence.py
-│
-├── datasets/
-│   └── README.md
-│
-├── results/
-│   ├── tables/
-│   └── figures/
-│
-└── report/
-    └── SmartCane_Report.pdf
-```
-
-Adjust the filenames and folders to match the actual repository contents.
-
----
-
 ## Citation
 
 If referencing this project, use:
