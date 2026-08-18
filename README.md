@@ -1,316 +1,593 @@
-# S.I.G.H.T. Smart Cane Computer Vision
+# SmartCane: A Vision-Guided Navigation Aid for Visually Impaired Users
 
-S.I.G.H.T. is a computer-vision prototype for assistive navigation. The
-checked-in live application uses a camera and YOLO11s to identify relevant
-obstacles, estimate their direction and distance tier, choose the most urgent
-hazard, and send a compact command to a Raspberry Pi Pico 2 W.
+**Khawaja Faiza Qaisar – 217948233**
+**Tran Tran – 220168829**
+**Richard Balroop – 216906349**
 
-The repository also contains the complete experimental path that led to the
-current design: controlled image restoration, evaluation on real cane-camera
-footage, pixel-level temporal fusion, filter and temporal oracles, and
-detection-level tracking with bounded persistence.
+## Overview
 
-## Current status
+SmartCane is an assistive navigation prototype designed to help visually impaired users detect obstacles before physical contact occurs.
 
-The strongest real-camera result is one-frame ByteTrack persistence:
+Traditional white canes primarily detect obstacles at ground level through physical contact. SmartCane extends this capability by combining **real-time computer vision, object detection, audio feedback, and haptic vibration alerts**.
 
-| Method | Precision | Recall | mAP@0.5 | Rescued | Lost | Stale persisted FP |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Raw YOLO11s | 0.8738 | 0.2616 | 0.2591 | 0 | 0 | 0 |
-| ByteTrack + 1-frame persistence | 0.8716 | 0.2762 | 0.2698 | 5 | 0 | 1 |
+The system uses a webcam mounted on a cane to capture the user's surroundings. A host computer runs a lightweight **YOLO object detector** and determines:
 
-This tracking method is implemented and evaluated in `tracking/evaluate.py`.
-It is not yet integrated into `main.py`; the checked-in live application still
-uses current-frame YOLO detections. The Pico code provides haptic motor output.
-No separate audio-alert implementation is currently tracked in this branch.
+* What obstacle has been detected
+* Whether the obstacle is on the left, center, or right
+* Whether the obstacle is far, medium, or close
+* Which detected obstacle represents the most urgent hazard
 
-The retained original-model validation also evaluates YOLOv8n. On Dataset B,
-raw YOLOv8n reaches 0.0669 recall and 0.0504 mAP@0.5. BoT-SORT with three-frame
-persistence raises these to 0.0727 and 0.0518 by rescuing two clear-frame
-instances with no raw losses or stale persisted false positives. It does not
-improve moderate- or severe-blur recall. Pixel fusion also underperforms raw
-YOLOv8n, while the eight-method union provides no severe-blur recovery; see
-`YOLOV8N_VALIDATION.md`.
+The resulting hazard state is transmitted over USB serial to a **Raspberry Pi Pico**, which controls the vibration motor and audio feedback.
+
+---
+
+## System Architecture
+
+```text
+             Camera
+                |
+                v
+       +------------------+
+       |   Host Computer  |
+       |                  |
+       |   YOLO Detector  |
+       |        |         |
+       |        v         |
+       | Hazard Scoring   |
+       |        |         |
+       |        v         |
+       | Serial Command   |
+       +--------+---------+
+                |
+              USB
+                |
+                v
+       +------------------+
+       | Raspberry Pi Pico|
+       |                  |
+       |   MicroPython    |
+       +--------+---------+
+                |
+          +-----+-----+
+          |           |
+          v           v
+     Vibration      Audio
+       Motor        Module
+```
+
+---
+
+## Key Features
+
+* Real-time object detection using YOLO
+* Detection of multiple obstacles in a single frame
+* Left / center / right hazard classification
+* Distance approximation using bounding-box height
+* Priority-based hazard selection
+* Three-level haptic feedback
+* USB serial communication between host computer and Raspberry Pi Pico
+* Heartbeat communication for improved safety
+* Automatic motor shutdown when the host program exits
+* Evaluation of image restoration techniques for motion-blurred cane footage
+* Evaluation of temporal detection methods using object tracking
+
+---
+
+## Experiment Archive
+
+The complete image-restoration, temporal-fusion, oracle, and tracking study is
+kept under [`denoise_filter/`](denoise_filter/). Its source code, datasets,
+stored results, requirements, and detailed reproduction instructions retain
+their original internal directory structure. Run experiment commands from that
+directory:
+
+```bash
+cd denoise_filter
+```
+
+The live cane application remains at the repository root. The evaluated
+filters and tracking methods are research results and are not integrated into
+the live hardware pipeline.
+
+---
+
+## Hardware
+
+### Prototype Hardware
+
+* Raspberry Pi Pico
+* USB connection
+* Camera / webcam
+* Vibration motor
+* Audio module
+* Cane mounting hardware
+* Host computer/laptop for real-time object detection
+
+The Raspberry Pi Pico is responsible for the hardware control layer, while computationally intensive object detection is performed on the host computer.
+
+---
+
+## Software Requirements
+
+### Host Computer
+
+The project requires Python with the appropriate computer vision and machine learning dependencies.
+
+Major components include:
+
+* Python 3
+* YOLO / Ultralytics
+* OpenCV
+* NumPy
+* PyTorch
+* Serial communication (`pyserial`)
+
+Additional packages may be required for the restoration and tracking experiments.
+
+### Raspberry Pi Pico
+
+The Pico runs:
+
+* MicroPython
+* Serial command handling
+* GPIO motor control
+* Audio control
+
+The MicroPython program can be flashed to the Pico using **Thonny IDE**.
+
+---
+
+## Hazard Detection
+
+Each YOLO detection is converted into a hazard score based on its apparent distance and horizontal position.
+
+### Direction
+
+The image is divided into three columns:
+
+```text
++----------------+----------------+----------------+
+|                |                |                |
+|      LEFT      |     CENTER     |     RIGHT      |
+|                |                |                |
++----------------+----------------+----------------+
+```
+
+The horizontal center of a bounding box determines the direction.
+
+### Distance Approximation
+
+Distance is estimated using bounding-box height:
+
+| Distance | Bounding-box height |
+| -------- | ------------------: |
+| Close    |            > 250 px |
+| Medium   |          120–250 px |
+| Far      |            ≤ 120 px |
+
+Far objects are ignored by the hazard-scoring system.
+
+### Hazard Score
+
+```text
+Hazard Score = Distance Score + Direction Bonus
+```
+
+| Condition    | Score |
+| ------------ | ----: |
+| Close        |  +100 |
+| Medium       |   +50 |
+| Far          |    +0 |
+| Center       |    +2 |
+| Left / Right |    +0 |
+
+The center bonus acts only as a tiebreaker between hazards at the same distance.
+
+---
+
+## Haptic Commands
+
+The highest-scoring hazard is converted into a single-character command.
+
+| State | Score | Command | Haptic Feedback                 |
+| ----- | ----: | ------- | ------------------------------- |
+| STOP  | ≥ 100 | `C`     | Fast, high-intensity pulses     |
+| WARN  | 50–99 | `M`     | Slower, medium-intensity pulses |
+| SAFE  |  < 50 | `S`     | Motor off                       |
+
+Only the current highest-priority hazard controls the haptic output.
+
+For example, if a bottle is close and centered while a cellphone is farther away on the right, the bottle receives the higher hazard score and determines the alert.
+
+---
+
+## Serial Communication
+
+The host computer communicates with the Raspberry Pi Pico using USB serial.
+
+Three commands are used:
+
+```text
+C → STOP / close hazard
+M → WARN / medium-distance hazard
+S → SAFE / no relevant hazard
+```
+
+To improve reliability, the host uses two communication mechanisms:
+
+### State-change transmission
+
+A command is sent when the hazard state changes.
+
+### Heartbeat
+
+The current state is retransmitted every **2 seconds**, even if the state has not changed.
+
+This prevents the Pico from remaining indefinitely in an incorrect state if a serial byte is lost.
+
+### Safe shutdown
+
+The host application uses a `try/finally` shutdown mechanism to send:
+
+```text
+S
+```
+
+before closing the camera and serial connection.
+
+This ensures that the vibration motor is stopped when the program is interrupted or exits unexpectedly.
+
+---
+
+# Image Restoration Study
+
+A major part of the project investigated whether image restoration could improve object detection under motion blur and other camera degradation.
+
+Two object detectors were evaluated:
+
+* **YOLOv8n** – lightweight detector used by the prototype
+* **YOLO11s** – stronger detector used to investigate whether restoration effects depended on detector capacity
 
 ## Datasets
 
-### Dataset A: controlled synthetic restoration
+### Dataset A – Synthetic Degradation
 
-- 40 clean COCO images in `data/clean/`
-- Corresponding YOLO-format labels in `data/clean_labels/`
-- Synthetic Gaussian noise, motion blur, low light, and glare
-- PSNR, SSIM, detection accuracy, and runtime evaluation
+Dataset A consisted of **40 clean COCO images** with YOLO-format annotations.
 
-The degradation parameters are pinned in `restoration/degrade.py`. The compared
-methods are raw input, Gaussian, bilateral, Wiener denoising, Wiener
-deconvolution, and CLAHE.
+Four degradation types were artificially applied at multiple severity levels:
 
-### Dataset B: real cane-camera benchmark
+* Gaussian noise
+* Motion blur
+* Low light
+* Glare
 
-- 7 original videos in `data/videos/`
-- 84 lossless target PNGs in `data/frames_real/`
-- 84 human-reviewed YOLO label files in `data/real_labels/`
-- 344 scored ground-truth instances
-- Quality groups: `clear`, `moderate_blur`, and `severe_blur`
-- Frame/video/timestamp metadata in `data/frames_real_metadata.csv`
+Because the original clean images were available, restoration quality could be evaluated against a known reference.
 
-`data/frames_real/`, `data/real_labels/`, and
-`data/frames_real_metadata.csv` are the canonical Dataset B evaluation paths.
-The annotation and `smart_cane_frames/` directories retain selection and
-annotation provenance.
+### Dataset B – Real Cane-Camera Footage
 
-### Variable-frame-rate warning
+Dataset B consisted of:
 
-`video1.mov` behaves as variable-frame-rate footage. Its stored frame number can
-be several decoded frames away from the intended timestamp. Temporal code must
-locate targets using decoded `CAP_PROP_POS_MSEC` timestamps, as implemented in
-`temporal/neighbors.py`, rather than relying only on
-`round(timestamp * fps)`.
+* 7 cane-sweep videos
+* 84 manually annotated frames
+* 344 object instances
 
-## Experimental findings
+The frames were categorized as:
 
-1. Matched restoration can help on known synthetic degradation in Dataset A.
-2. On real Dataset B frames, raw YOLO11s generally beats universal
-   single-frame preprocessing.
-3. Farneback alignment and pixel fusion degrade detection under large
-   cane-sweep ego-motion, especially for severe blur.
-4. The filter union raises recall from about 0.262 to 0.329, but most GT objects
-   remain missed by every tested preprocessing method.
-5. Nearby raw frames provide meaningful temporal headroom: recall reaches
-   0.3459 at +/-1, 0.4390 at +/-3, and 0.4826 at +/-5 in the bidirectional
-   oracle.
-6. The causal past-1 oracle reaches 0.3227 recall.
-7. One-frame ByteTrack persistence captures a modest portion of this headroom
-   while nearly preserving raw precision.
+| Condition     | Frames | Ground-Truth Instances |
+| ------------- | -----: | ---------------------: |
+| Clear         |     28 |                    125 |
+| Moderate blur |     35 |                    154 |
+| Severe blur   |     21 |                     65 |
+| **Total**     | **84** |                **344** |
 
-Detailed reports:
+The real dataset is chair-dominated, which should be considered when interpreting aggregate performance.
 
-- `YOLOV8N_VALIDATION.md`
-- `TEMPORAL_RESTORATION.md`
-- `TEMPORAL_ORACLE.md`
-- `TRACKING_PERSISTENCE.md`
+---
 
-## Repository layout
+## Restoration Methods
+
+The following preprocessing approaches were evaluated against an unprocessed raw baseline:
+
+* Gaussian filtering
+* Bilateral filtering
+* Wiener denoising
+* Wiener deconvolution
+* CLAHE
+
+For synthetic motion blur, Wiener deconvolution was provided with the known blur kernel.
+
+---
+
+## Main Restoration Findings
+
+Restoration produced substantial improvements on **controlled synthetic degradation**.
+
+For example, YOLOv8n mAP@0.5 increased:
 
 ```text
-.
-├── main.py, decision.py, command.py, pico_connection.py
-│   Live host-side vision and command pipeline
-├── MicroPython/
-│   Pico-side haptic controller
-├── data/
-│   Dataset A, Dataset B, source videos, labels, and metadata
-├── annotation/
-│   Model-assisted annotation and promotion workflow
-├── restoration/
-│   Degradations, filters, metrics, and Dataset A/B evaluators
-├── temporal/
-│   Neighbor lookup, optical flow, quality gates, and pixel fusion
-├── tracking/
-│   ByteTrack/BoT-SORT configurations and persistence evaluation
-├── analysis/
-│   Oracles, plots, and qualitative example generation
-├── results/
-│   CSVs, prediction caches, plots, examples, and tracking states
-└── archive/
-    Preserved exploratory code and superseded generated examples
+Mild motion blur:
+0.1542 → 0.3178
+
+Medium motion blur:
+0.0677 → 0.1998
 ```
 
-## Installation
+However, these improvements did **not transfer to real cane-camera footage**.
 
-Python 3.11 is recommended.
-
-```bash
-python3.11 -m venv venv
-source venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-For the optional annotation GUI:
-
-```bash
-python -m pip install -r requirements-annotation.txt
-```
-
-The current environment was validated with NumPy 1.26.4 and Ultralytics
-8.4.120. CPU execution is supported; compatible Apple Silicon systems may use
-MPS automatically for YOLO inference.
-
-## Model weights
-
-The checked-in live application and default evaluator configuration load
-`yolo11s.pt` from the repository root. The original prototype used
-`yolov8n.pt`; retained Dataset A/B validation outputs for that checkpoint are
-documented in `YOLOV8N_VALIDATION.md`. Ultralytics may download official
-weights when network access is available; otherwise place the files in the
-project root before running an evaluator.
-
-Model weights are intentionally ignored by Git. The weight used for the stored
-results has this SHA-256 digest:
+On real footage, raw YOLO11s achieved:
 
 ```text
-85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5
+Precision: 0.8738
+Recall:    0.2616
+mAP@0.5:   0.2591
 ```
 
-Verify a local copy on macOS/Linux with:
+and outperformed every tested single-frame restoration method.
 
-```bash
-shasum -a 256 yolo11s.pt
-```
-
-The retained YOLOv8n validation weight has SHA-256 digest:
+Wiener deconvolution completely failed on the real footage:
 
 ```text
-f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36
+Precision: 0.0000
+Recall:    0.0000
+mAP@0.5:   0.0000
 ```
 
-## Reproducing the experiments
+The primary reason is that synthetic motion blur uses a known global degradation model, while real cane motion produces spatially varying blur caused by camera rotation, translation, and objects at different depths.
 
-Run commands from the repository root. The repository tracks reference outputs,
-so commands that regenerate them will produce Git changes. Oracle and tracking
-commands deliberately require an explicit force option before overwriting
-existing outputs.
+### Conclusion
 
-### Dataset A
+> Restoration methods that work under controlled degradation do not necessarily generalize to real cane-mounted camera footage.
 
-```bash
-python -m restoration.eval_dataset_a
-MPLCONFIGDIR=/private/tmp/sight-mpl-cache python -m analysis.plots
+For this reason, image restoration was removed from the live SmartCane pipeline.
+
+---
+
+# Temporal Processing
+
+Temporal information was investigated as another method of improving detection under motion blur.
+
+Two approaches were tested:
+
+1. Pixel-level temporal image fusion
+2. Object-level temporal persistence
+
+## Pixel-Level Fusion
+
+Neighboring frames were aligned using Farneback optical flow and fused with the target frame.
+
+The fixed fusion strategy was:
+
+```text
+0.25 I(t-1) + 0.50 I(t) + 0.25 I(t+1)
 ```
 
-Primary output: `results/results_dataset_a.csv`.
+However, temporal pixel fusion reduced detection performance.
 
-To retain a separate original-model run:
+For YOLO11s:
 
-```bash
-python -m restoration.eval_dataset_a \
-  --model yolov8n.pt --confidence 0.25 --seed 0 \
-  --output-csv results/yolov8n/results_dataset_a.csv
+| Method                      | Precision | Recall | mAP@0.5 |
+| --------------------------- | --------: | -----: | ------: |
+| Raw                         |    0.8738 | 0.2616 |  0.2591 |
+| Temporal – Fixed            |    0.6786 | 0.1657 |  0.2101 |
+| Temporal – Quality Weighted |    0.5747 | 0.1453 |  0.1953 |
+
+The likely cause is inaccurate local alignment during large cane movements, which can smear object boundaries even when global image-quality metrics appear reasonable.
+
+---
+
+## Object-Level Persistence
+
+Instead of modifying the input image, temporal information was applied after object detection.
+
+ByteTrack and BoT-SORT were evaluated to determine whether an object detected in nearby frames could temporarily persist when the detector missed it.
+
+A key safety rule was enforced:
+
+> Current raw detections are never removed.
+
+For YOLO11s, one-frame ByteTrack persistence produced:
+
+| Metric              |    Raw | ByteTrack +1 Frame |
+| ------------------- | -----: | -----------------: |
+| Precision           | 0.8738 |             0.8716 |
+| Recall              | 0.2616 |             0.2762 |
+| F1                  | 0.4027 |             0.4194 |
+| mAP@0.5             | 0.2591 |             0.2698 |
+| True Positives      |     90 |                 95 |
+| False Positives     |     13 |                 14 |
+| Rescued Objects     |      0 |                  5 |
+| Lost Raw Detections |      0 |                  0 |
+
+This suggests that short-term object persistence is a more promising approach than pixel-level temporal fusion.
+
+---
+
+# Detector Comparison
+
+One of the strongest findings was the difference between detector capacity.
+
+On the same real cane-camera footage:
+
+| Detector | Precision | Recall | mAP@0.5 |
+| -------- | --------: | -----: | ------: |
+| YOLOv8n  |    0.7667 | 0.0669 |  0.0504 |
+| YOLO11s  |    0.8738 | 0.2616 |  0.2591 |
+
+The improvement from changing the detector was substantially larger than the gains obtained through preprocessing.
+
+This suggests that future development should prioritize:
+
+* stronger detectors
+* model fine-tuning
+* realistic cane-camera training data
+* model compression for edge deployment
+
+rather than universal image preprocessing.
+
+---
+
+# Testing
+
+The working haptic system was tested using a bottle and cellphone.
+
+Tests included:
+
+* Individual objects on the left
+* Individual objects in the center
+* Individual objects on the right
+* Two objects at matching distances
+* Two objects at different distances
+* Side-by-side objects
+* Different combinations of distance and direction
+
+The system correctly prioritized the more urgent object when multiple objects were present.
+
+For example:
+
+```text
+Bottle:
+Close + Center
+
+Cellphone:
+Medium + Right
+
+→ Bottle receives priority
+→ STOP command (`C`)
+→ Fast, high-intensity vibration
 ```
 
-### Dataset B and single-frame filters
+Audio-module testing, denoising evaluation, and complete physical-assembly testing are still ongoing.
 
-```bash
-python -m restoration.eval_dataset_b
-python -m analysis.hero_examples
+---
+
+# Challenges
+
+Several challenges significantly influenced the final system design.
+
+### 1. Unknown Motion-Blur Kernel
+
+Wiener deconvolution requires knowledge of the degradation kernel. Real cane movement does not produce a single fixed global blur kernel.
+
+### 2. Optical Flow Under Fast Motion
+
+Large sweeping cane movements caused inaccurate optical-flow alignment and introduced image smearing during temporal fusion.
+
+### 3. Limited Real-World Dataset
+
+The real evaluation dataset contains only 84 frames from seven videos and is dominated by chairs.
+
+### 4. Motor Shutdown
+
+Early testing revealed that the motor could continue vibrating after the host program stopped. A `try/finally` shutdown mechanism was added to guarantee that the Pico receives the `S` command.
+
+### 5. Close-Range Detection
+
+When an object approaches extremely close to the camera, it may fill or extend beyond the camera's field of view. This can cause truncation and loss of recognizable features, resulting in missed detections at precisely the point where an obstacle is most urgent.
+
+---
+
+# Changes from the Original Plan
+
+The original design proposed a dual-device system consisting of:
+
+* A smart cane for lower obstacles
+* Smart glasses for overhead obstacles
+* Multiple camera feeds
+* Centralized processing
+* Frequency-domain image restoration
+
+During development, several issues were identified:
+
+* Restoration did not generalize to real cane footage
+* Dual wireless camera feeds introduced latency and connection instability
+* Continuous audio announcements created excessive feedback
+* Additional preprocessing increased computational cost
+
+The final prototype therefore uses a **single camera mounted on the cane**, with the smart-glasses component reserved for future development.
+
+The live pipeline prioritizes:
+
+```text
+Camera
+  ↓
+YOLO Detection
+  ↓
+Hazard Scoring
+  ↓
+Priority Selection
+  ↓
+USB Serial
+  ↓
+Raspberry Pi Pico
+  ↓
+Haptic / Audio Alert
 ```
 
-Primary outputs:
+---
 
-- `results/results_dataset_b_frames.csv`
-- `results/results_dataset_b_summary.csv`
-- `results/results_dataset_b_groundtruth.csv`
-- `results/results_dataset_b_by_quality.csv`
-- `results/hero_examples/`
+# Future Work
 
-To retain separate YOLOv8n outputs:
+Potential improvements include:
 
-```bash
-python -m restoration.eval_dataset_b \
-  --model yolov8n.pt --confidence 0.15 \
-  --output-dir results/yolov8n
+* Fine-tuning a stronger detector on real cane-camera footage
+* Integrating ByteTrack persistence into the live pipeline
+* Using realistic motion-blurred training data
+* Testing higher-frame-rate cameras
+* Using a global-shutter camera
+* Improving camera stabilization and mounting
+* Replacing bounding-box size with true depth sensing
+* Moving inference onto an edge-AI device such as a Raspberry Pi 5
+* Expanding the real-world dataset
+* Testing outdoors and in more diverse environments
+* Evaluating additional obstacle classes
+* Conducting formal user testing with visually impaired participants
+* Optimizing vibration patterns and audio feedback
+* Investigating fallback proximity heuristics for extreme close-range obstacles
+
+---
+
+# Key Conclusions
+
+The project produced four main conclusions:
+
+1. **Image restoration can substantially improve detection under controlled synthetic degradation.**
+2. **These improvements do not reliably transfer to real cane-mounted footage.**
+3. **Pixel-level temporal fusion can hurt detection when camera motion causes inaccurate alignment.**
+4. **Short-term object-level persistence provides a safer and more practical approach to recovering temporary missed detections.**
+
+Overall, the experiments suggest that SmartCane should prioritize **detector capacity, realistic training data, and lightweight post-detection temporal reasoning** rather than relying on universal image preprocessing.
+
+---
+
+## Repository Structure
+
+```text
+SmartCane/
+├── README.md
+├── main.py, decision.py, command.py
+│   Live host-side detection and alert pipeline
+├── pico_connection.py, main_pico.py
+│   Pico communication and controller code
+├── hysteresis.py, important_objects.py
+│   Live hazard-selection support
+├── audio_files/
+│   Audio assets and SD-card preparation helper
+└── denoise_filter/
+    ├── README.md
+    ├── restoration/, temporal/, tracking/, analysis/
+    ├── data/, annotation/, smart_cane_frames/
+    ├── results/
+    └── requirements.txt
 ```
 
-### Pixel-level temporal restoration
+---
 
-```bash
-python -m restoration.eval_temporal
-python -m analysis.temporal_hero_examples
-MPLCONFIGDIR=/private/tmp/sight-mpl-cache python -m analysis.temporal_plots
+## Citation
+
+If referencing this project, use:
+
+```text
+K. F. Qaisar, T. Tran, and R. Balroop,
+"SmartCane: A Vision-Guided Navigation Aid for Visually Impaired Users,"
+2026.
 ```
-
-Primary outputs are `results/temporal_results.csv`,
-`results/temporal_frame_analysis.csv`, `results/temporal_examples/`, and the
-temporal plots under `results/plots/`.
-
-### Filter oracle
-
-```bash
-python -m analysis.oracle_recall
-```
-
-Outputs: `results/oracle_union_instances.csv` and
-`results/oracle_union_summary.csv`.
-
-### Temporal detection oracle
-
-```bash
-python -m analysis.temporal_oracle --force-outputs
-python -m analysis.temporal_oracle_causal --force-output
-```
-
-Full-video predictions are retained in `results/temporal_oracle_cache/` so
-valid caches can be reused without repeating all YOLO inference. Use
-`--rebuild-cache` only when the videos, model, threshold, or class set changes.
-
-### Tracking and persistence
-
-```bash
-MPLCONFIGDIR=/private/tmp/sight-mpl-cache \
-  python -m tracking.evaluate --force-outputs
-```
-
-The evaluator requires the seven temporal-oracle cache shards and the causal
-oracle summary. It verifies the expected 84 frames, 344 GT instances, and raw
-baseline before writing tracking results.
-
-Important outputs include:
-
-- `results/tracking_results.csv`
-- `results/tracking_instance_analysis.csv`
-- `results/tracking_detection_analysis.csv`
-- `results/tracking_oracle_comparison.csv`
-- `results/tracking_runtime.csv`
-- `results/tracking_frame_states.jsonl`
-- `results/tracking_plots/`
-- `results/tracking_examples/`
-
-## Annotation workflow
-
-The existing labels are already human-reviewed. To annotate additional selected
-frames:
-
-```bash
-python -m annotation.select_subset
-python -m annotation.prelabel
-labelImg annotation/to_label
-python -m annotation.promote_labels
-```
-
-`prelabel` creates drafts only. Every draft must be manually corrected before
-promotion into `data/real_labels/`.
-
-## Live application
-
-The live entry point remains:
-
-```bash
-python main.py
-```
-
-It expects the configured camera and serial-connected Pico. Camera index and
-serial-port settings are currently defined in the existing live source files.
-Press `q` in the OpenCV window to exit. Hardware source and configuration should
-be validated on the actual demonstration system before changing them.
-
-## Evaluation notes
-
-- YOLO confidence is 0.15 for the live and real-camera evaluation paths.
-- Relevant classes are defined centrally in `restoration/classes.py`.
-- Detection matching uses same-class IoU >= 0.5.
-- `restoration/detection_metrics.py` is the shared mAP implementation.
-- The stored raw mAP@0.5 and mAP@0.5:0.95 are both 0.2591. The stricter sweep
-  was implemented separately over IoU thresholds 0.50 through 0.95; the unusual
-  equality is retained for later verification rather than altered during
-  repository cleanup.
-- Nearby video frames are correlated, so the 84 targets should not be described
-  as statistically independent samples.
-
-## Reproducibility policy
-
-Datasets, annotations, metadata, result tables, plots, qualitative failures, and
-expensive full-video prediction caches are intentionally tracked. Virtual
-environments, Python caches, local agent/editor settings, and model weights are
-ignored. Do not remove duplicate-looking annotation or dataset exports without
-first confirming their provenance and canonical consumer paths.

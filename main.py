@@ -1,42 +1,26 @@
-import time
 import cv2
+from pathlib import Path
 from ultralytics import YOLO
 
-from decision import hazard_score, cane_decision, DANGEROUS_OBJECTS
 from command import generate_command
+from decision import cane_decision, hazard_score
+from hysteresis import CommandStabilizer
 from pico_connection import send_command
+import important_objects
 
-# Load YOLO
-model = YOLO("yolo11s.pt")
 
-# Open camera
-# find_camera.py once if you're not sure which index is which.
-CAMERA_INDEX = 0
-cap = cv2.VideoCapture(CAMERA_INDEX)
+PROJECT_DIR = Path(__file__).resolve().parent
+model = YOLO(str(PROJECT_DIR / "yolov8n.pt"))
 
+cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("Cannot open camera")
     exit()
 
-# The one place this list is defined -- decision.py's hazard scoring
-# already filters on it too, so keeping a second copy here risked the
-# two silently drifting apart.
-important_objects = DANGEROUS_OBJECTS
 
-# Default YOLO confidence (0.25) turned out too strict for this
-# camera's actual mounting angle (low, close-up, oblique -- see
-# restoration/eval_dataset_b.py findings): real objects were being
-# detected around 5-10% confidence and silently dropped before
-# main.py ever saw them. Lowered to trade some false-positive buzzes
-# for catching hazards that were previously missed entirely -- for a
-# safety device, a missed obstacle is worse than an extra buzz.
-YOLO_CONFIDENCE = 0.15
+# Owns hysteresis, de-duplication, and the heartbeat resend.
+stabilizer = CommandStabilizer()
 
-previous_command = None
-last_time_sent = 0
-heartbeat_interval = 2.0  # resend the current command this often even if it
-                          # hasn't changed, so a dropped serial byte can't
-                          # leave the motor stuck on (or stuck off)
 
 try:
     while True:
@@ -45,48 +29,40 @@ try:
             break
 
         height, width, _ = frame.shape
-
         left_limit = width / 3
         right_limit = 2 * width / 3
 
-        results = model(frame, conf=YOLO_CONFIDENCE)
+        results = model(frame, verbose=False)
+ 
 
-        # Score every dangerous object in this frame and keep only the
-        # single most urgent one. This is what makes "two hazards at once"
-        # resolve to the closer/more-central one, instead of whichever box
-        # happened to be processed last.
+        # ── Score every hazard in this frame, keep only the worst ──
+        # One command per frame, not one per detection. Sending per
+        # detection means a distant chair's SAFE cancels a close
+        # person's STOP milliseconds after it was sent.
+
         top_score = 0
-        top_info = None  # (label, direction, distance)
-
-        # Collect draw info for every box so we can label pixel height
-        # and distance tier on screen -- this is what you use to pick
-        # real CLOSE/MEDIUM/FAR thresholds instead of guessing them.
-        overlay_boxes = []
+        top_info = None          # (label, direction, distance)
+        overlay_boxes = []             # on-screen h=<px> labels
 
         for result in results:
-            boxes = result.boxes
+            for box in result.boxes:            # type: ignore
+                label = model.names[int(box.cls[0])]
 
-            for box in boxes:
-                class_id = int(box.cls[0])
-                label = model.names[class_id]
-
-                if label not in important_objects:
+                if label not in important_objects.important_objects:
                     continue
 
-                # Bounding box
                 x1, y1, x2, y2 = box.xyxy[0]
                 center_x = (x1 + x2) / 2
 
-                # Direction
+                box_height = float(y2 - y1)
+
+
                 if center_x < left_limit:
                     direction = "LEFT"
                 elif center_x > right_limit:
                     direction = "RIGHT"
                 else:
                     direction = "CENTER"
-
-                # Distance estimation
-                box_height = y2 - y1
 
                 if box_height > 250:
                     distance = "CLOSE"
@@ -97,83 +73,76 @@ try:
 
                 score = hazard_score(label, direction, distance)
 
+                
+
                 if score > top_score:
                     top_score = score
                     top_info = (label, direction, distance)
 
-                overlay_boxes.append(
-                    (int(x1), int(y1), int(y2), label, direction, distance, int(box_height))
-                )
+                overlay_boxes.append((int(x1), int(y2), label, direction, distance, int(box_height)))
 
-        # Decide based on the single most urgent hazard this frame
+        # ── Decide once, on the winner ──
+        # An empty frame falls through to SAFE, so walking out of view
+        # always produces an all-clear rather than leaving the cane latched.
+
         if top_info:
-            label, direction, distance = top_info
-            action = cane_decision(label, direction, distance)
+           
+            top_label, top_direction, top_distance = top_info
+            action = cane_decision(top_label, top_direction, top_distance)
         else:
-            label, direction, distance = None, None, None
+            top_label, top_direction, top_distance = None, None, None     
             action = "SAFE"
 
-        # Hardware command
         command = generate_command(action)
 
-        current_time = time.time()
 
-        should_send = (
-            command != previous_command
-            or (current_time - last_time_sent) >= heartbeat_interval
-        )
+        to_send = stabilizer.update(command)
 
-        if should_send:
-            if command != previous_command:
+        if to_send:
+            if stabilizer.just_changed:
+                # Full report on a real state change (not on heartbeats).
+                # NOTE: hysteresis can delay a commit by a frame or two,
+                # so this describes the frame the commit landed on rather
+                # than necessarily the frame that began the escalation.
                 print(
                     f"""
-Object: {label}
-Direction: {direction}
-Distance: {distance}
-Action: {action}
-Command: {command}
-"""
+                    Object:    {top_label}
+                    Direction: {top_direction}
+                    Distance:  {top_distance}
+                    Action:    {action}
+                    Command:   {to_send}"""
                 )
+            send_command(to_send)
 
-            send_command(command)
 
-            previous_command = command
-            last_time_sent = current_time
-
+        # ── Display ──
+    
         annotated = results[0].plot()
 
-        # Draw "h=<pixel height> <DISTANCE>" under each box so you can
-        # watch the number live and see exactly where it crosses your
-        # CLOSE/MEDIUM/FAR cutoffs as you move an object toward the camera.
-        for (x1, y1, y2, ov_label, ov_direction, ov_distance, box_height) in overlay_boxes:
-            text = f"h={box_height} {ov_distance}"
-            text_y = min(y2 + 25, height - 10)  # keep text on-screen even for tall boxes
-            cv2.putText(
-                annotated,
-                text,
-                (x1, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 255),
-                2,
-            )
+        
+        for (x, y_bottom, ov_label, ov_direction,
+             ov_distance, box_h) in overlay_boxes:
+            text_y = min(y_bottom + 25, height - 10)
+            cv2.putText(annotated,
+                        f"h={box_h} {ov_distance} {ov_direction}",
+                        (x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+ 
+        cv2.putText(annotated, f"state: {stabilizer.state}", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        
 
-        cv2.imshow(
-            "Smart Cane Vision",
-            annotated
-        )
+        cv2.imshow("Smart Cane Vision", annotated)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
 finally:
-    # THIS ALWAYS RUNS, EVEN IF YOU PRESS CTRL+C OR THE SCRIPT CRASHES
-    print("\nStopping vision system & turning off motor...")
+    print("\nStopping vision system & turning off actuators...")
     try:
-        send_command("S")  # Turn off motor on Pico
+        send_command("S")
     except Exception as e:
         print("Failed to send stop command:", e)
 
     cap.release()
     cv2.destroyAllWindows()
-

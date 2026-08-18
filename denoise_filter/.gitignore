@@ -15,7 +15,7 @@ htmlcov/
 .ipynb_checkpoints/
 .matplotlib/
 
-# Local editor and agent settings
+# Local editor/agent settings
 .claude/
 
 # OS and temporary files
