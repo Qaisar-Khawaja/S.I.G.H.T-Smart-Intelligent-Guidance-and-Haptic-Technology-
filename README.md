@@ -1,23 +1,3 @@
-Yes. Your current README is **good structurally**, but it is now out of sync with the actual report in several important technical places.
-
-The biggest corrections are:
-
-* **USB serial → UDP over WiFi** for host-to-Pico communication.
-* Commands are no longer just `C/M/S`; they are **`CL`, `CC`, `CR`, `ML`, `MC`, `MR`, `S`**.
-* The Pico controls **both vibration and the DFPlayer Mini audio module**.
-* Audio communicates **direction**, while the first command character communicates **urgency**.
-* Add the **2-frame escalation / 8-frame de-escalation hysteresis**.
-* Add the **3-second watchdog** and 1-second host retransmission.
-* Remove the claim that ByteTrack is already part of the live pipeline — the report explicitly says it **has not yet been integrated**.
-* Update the restoration results with the more complete YOLOv8n/YOLO11s findings.
-* Add the **oracle temporal analysis**.
-* Add the detailed testing ladder.
-* Correct the repository structure to reflect the actual project.
-* Mention the **DFPlayer Mini, 8 Ω 2 W speaker, microSD, UART**, and audio clips.
-* Remove the old `pico_connection.py` / USB-serial framing if those are not actually the current architecture.
-
-I would replace your README with this version:
-
 # SmartCane: A Vision-Guided Navigation Aid for Visually Impaired Users
 
 **Khawaja Faiza Qaisar – 217948233**
